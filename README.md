@@ -77,7 +77,7 @@ The exe is not code-signed, so Windows SmartScreen may warn the first time: choo
 
 Double-clicking empty space in a pane goes up a folder (can be turned off in the view menu).
 
-Address bar: click a folder in the path to go there; click the current folder or empty space, or press Ctrl+L, to type a path.
+Address bar: click a folder in the path to go there; click a › to list the folders inside; click the current folder or empty space, or press Ctrl+L, to type a path.
 
 ## Build
 

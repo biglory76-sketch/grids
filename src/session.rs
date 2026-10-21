@@ -275,6 +275,14 @@ pub(crate) fn crumb_fit(w: &[i32], avail: i32, sep: i32, ell: i32, min: i32) -> 
     (first, first > 0 && used + ell + sep <= avail, last)
 }
 
+// crumb_fit with room kept for a '›' after the current folder (its subfolders), when that still leaves `min`.
+// Shell places and fields too narrow for it lay out exactly as before. (first, '…' shown, last width, tail '›')
+pub(crate) fn crumb_fit_tail(w: &[i32], avail: i32, sep: i32, ell: i32, min: i32, fs: bool) -> (usize, bool, i32, bool) {
+    let tail = fs && avail - sep >= min;
+    let (first, more, last) = crumb_fit(w, if tail { avail - sep } else { avail }, sep, ell, min);
+    (first, more, last, tail)
+}
+
 pub(crate) const RECENT: usize = 20;
 
 // A pane moving from `old` to `new` puts both at the front of the recent list. Coming back to the folder it

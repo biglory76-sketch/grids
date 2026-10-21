@@ -194,7 +194,7 @@ F3\tQuick preview of the focused file (arrows: previous / next, Esc: close)\n\
 F1\tHelp (opens the README on GitHub)\n\
 Win+Alt+E\tBring Grids to front from any app (again: minimize)\n\
 F2, Del, Ctrl+C/X/V, F5\tSame as Explorer\n\n\
-Address bar: click a folder in the path to go there; click the current folder or empty space, or press Ctrl+L, to type a path\n\
+Address bar: click a folder in the path to go there; click a › to list the folders inside; click the current folder or empty space, or press Ctrl+L, to type a path\n\
 Layout button: click for an even grid, press and drag for rows per column (arrow keys + Enter work too)\n\
 ⇄ button: open the selected folder (or the current one) in another pane, with this pane's columns; or copy / move the selected files to another pane's folder (up to 10,000)\n\
 Save (Ctrl+S): overwrite the current session file; green dot = unsaved layout changes (not folder moves)\n\
@@ -230,7 +230,7 @@ F3\t포커스한 파일 빠른 미리보기 (방향키: 이전·다음, Esc: 닫
 F1\t도움말 (GitHub README 열기)\n\
 Win+Alt+E\t어디서나 Grids 앞으로 (다시 누르면 최소화)\n\
 F2, Del, Ctrl+C/X/V, F5\t탐색기와 동일\n\n\
-주소 칸: 경로의 폴더를 누르면 그리로 이동, 현재 폴더·빈 곳을 누르거나 Ctrl+L이면 경로 입력\n\
+주소 칸: 경로의 폴더를 누르면 그리로 이동, › 를 누르면 그 안의 폴더 목록, 현재 폴더·빈 곳을 누르거나 Ctrl+L이면 경로 입력\n\
 레이아웃 버튼: 클릭 = 균등 배치, 누른 채 끌기 = 열마다 칸 수 (방향키+Enter도 가능)\n\
 ⇄ 버튼: 선택한 폴더(없으면 현재 폴더)를 다른 패널에서 열기, 열 순서·폭·정렬도 함께. 또는 선택한 파일을 다른 패널 폴더로 복사·이동 (최대 10,000개)\n\
 저장 (Ctrl+S): 지금 세션 파일에 바로 덮어쓰기, 초록 점 = 저장 안 된 배치 변경(폴더 이동은 제외)\n\

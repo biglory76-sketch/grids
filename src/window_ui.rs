@@ -29,7 +29,10 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                     redraw_all(); // maximize / restore
                 }
             }
-            WM_ENTERSIZEMOVE => app(|a| a.sizing = true),
+            WM_ENTERSIZEMOVE => {
+                app(|a| a.sizing = true);
+                kids_cancel(); // its '›' is about to move
+            }
             WM_EXITSIZEMOVE => {
                 app(|a| a.sizing = false);
                 refresh_drives(); // one that came or went mid-resize
@@ -197,6 +200,7 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 return LRESULT(1);
             }
             WM_DPICHANGED => {
+                kids_cancel();
                 let dpi = (wp.0 & 0xffff) as i32;
                 app(|a| {
                     a.s.side = a.s.side * dpi / a.dpi;
@@ -294,6 +298,7 @@ pub(crate) extern "system" fn pane_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                     focus_view(i);
                 }
             }
+            WM_KIDS => kids_show(h, wp.0),
             // folder icon looked up: only the icon's square is repainted, nothing moves
             WM_PANE_ICON => {
                 let (changed, dpi) = app(|a| {

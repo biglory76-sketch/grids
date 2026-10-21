@@ -157,12 +157,14 @@ pub(crate) unsafe fn pre_translate(m: &MSG) -> bool {
             false
         }
         WM_LBUTTONDOWN | WM_RBUTTONDOWN | WM_MBUTTONDOWN => {
+            kids_cancel();
             if let Some(i) = pane_of(m.hwnd) {
                 set_active(i);
             }
             false
         }
         WM_KEYDOWN | WM_SYSKEYDOWN => {
+            kids_cancel();
             // swallowed whole: no TranslateMessage, so no WM_CHAR either
             let (eat, next) = held_key(app(|a| a.held), m.wParam.0 as u16, m.lParam.0 & (1 << 30) != 0);
             app(|a| a.held = next);

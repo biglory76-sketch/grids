@@ -411,6 +411,58 @@ mod tests {
     }
 
     #[test]
+    fn crumb_tail_room() {
+        let f = |avail, fs| crumb_fit_tail(&[30, 40], avail, 4, 20, 16, fs);
+        assert_eq!(f(16, true), (1, false, 16, false)); // too narrow for the '›': current folder still shown
+        assert_eq!(f(19, true), (1, false, 19, false));
+        assert_eq!(f(20, true), (1, false, 16, true));
+        assert_eq!(f(500, true), (0, false, 40, true));
+        assert!(!f(500, false).3); // shell place: never
+        assert!(!f(16, false).3);
+    }
+
+    #[test]
+    fn kid_name_rules() {
+        use windows::Win32::Storage::FileSystem::{FILE_ATTRIBUTE_ARCHIVE, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_SYSTEM};
+        let (d, h, sy) = (FILE_ATTRIBUTE_DIRECTORY.0, FILE_ATTRIBUTE_HIDDEN.0, FILE_ATTRIBUTE_SYSTEM.0);
+        let all = || [("10", d), ("2", d), ("file.txt", FILE_ATTRIBUTE_ARCHIVE.0), ("Secret", d | h), ("Config.Msi", d | h | sy), ("a", d | sy)];
+        let names = |show| kid_names(all().into_iter().map(|(n, a)| (n.to_string(), a)), show);
+        assert_eq!(names(false), (vec!["2".to_string(), "10".into(), "a".into()], false));
+        assert_eq!(names(true), (vec!["2".to_string(), "10".into(), "a".into(), "Secret".into()], false));
+        let (v, cut) = kid_names((0..501).map(|k| (format!("f{k}"), d)), false);
+        assert_eq!((v.len(), cut, v[0].as_str(), v[499].as_str()), (500, true, "f0", "f499"));
+        assert_eq!(kid_names((0..500).map(|k| (format!("f{k}"), d)), false).1, false);
+    }
+
+    #[test]
+    fn kids_late_results_dropped() {
+        let mut j = KidsJob { id: 0, hwnd: 0, dir: String::new(), hidden: false, result: None };
+        let a = j.ask(1, r"C:\Users", false);
+        assert!(j.publish(a, Ok((vec!["A".into()], false))));
+        let b = j.ask(1, r"C:\", false);
+        assert!(!j.publish(a, Ok((vec!["A".into()], false))));
+        assert!(j.take(a).is_none() && j.take(b).is_none());
+        assert!(j.publish(b, Err(())));
+        assert!(j.take(b).is_some() && j.take(b).is_none());
+        // A's late WM_KIDS while B waits: not B's owner, so it leaves B alone
+        let w = HWND(1 as _);
+        let ask = KidsAsk { id: b, hwnd: w, i: 0, path: r"C:\Users\Public".into(), gen: 0, dir: r"C:\".into(), next: None };
+        assert!(!ask.owns(a, w) && ask.owns(b, w) && !ask.owns(b, HWND(2 as _)));
+        j.cancel();
+        assert!(!j.publish(b, Err(())) && j.dir.is_empty());
+    }
+
+    #[test]
+    fn kids_anchor_follows_layout() {
+        let r = |l| RECT { left: l, top: 0, right: l + 10, bottom: 20 };
+        let kids = |d: &str| Crumb::Kids(d.into(), None);
+        let wide = vec![(r(0), "C:".into(), Crumb::Go(r"C:\".into())), (r(10), "›".into(), kids(r"C:\")), (r(20), "Users".into(), Crumb::Here)];
+        assert_eq!(kids_anchor(&wide, r"C:\"), Some(r(10)));
+        let folded = vec![(r(0), "…".into(), Crumb::More(Vec::new())), (r(30), "›".into(), kids(r"C:\Users")), (r(40), "Users".into(), Crumb::Here)];
+        assert_eq!(kids_anchor(&folded, r"C:\"), None);
+    }
+
+    #[test]
     fn focus_rings() {
         let walk = |back, tree| (0..4).map(|p| focus_ring(p, back, tree)).collect::<Vec<_>>();
         assert_eq!(walk(false, true), [1, 2, 3, 0]);

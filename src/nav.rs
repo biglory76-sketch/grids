@@ -575,6 +575,7 @@ pub(crate) const WM_DROP_OPEN: u32 = WM_APP + 42;
 pub(crate) const WM_PEEK_DONE: u32 = WM_APP + 43; // wParam = gen; the picture itself stays in PEEK
 pub(crate) const WM_PANE_ICON: u32 = WM_APP + 44; // wParam = ticket, lParam = system image list index (-1: none)
 pub(crate) const WM_DRIVES: u32 = WM_APP + 45; // drives may have come or gone: refresh_drives
+pub(crate) const WM_KIDS: u32 = WM_APP + 46; // wParam = request id; the list itself stays in KIDS
 pub(crate) static NARROWING: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(-1); // column << 32 | width
 
 

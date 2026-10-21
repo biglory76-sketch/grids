@@ -64,6 +64,7 @@ pub(crate) struct App {
     pub(crate) drop_hover: HWND,                         // pane whose top bar something openable is being dragged over
     pub(crate) drop_open: Option<(HWND, usize, IShellItem)>, // folder dropped on a top bar, opened by WM_DROP_OPEN
     pub(crate) crumb_hot: Option<(HWND, usize)>,             // address bar crumb under the mouse (pane, crumb_layout index)
+    pub(crate) kids: Option<KidsAsk>,                        // '›' clicked, its subfolder list not back yet
     pub(crate) held: Option<u16>,        // key whose auto-repeats are swallowed until it is released (runtime only)
     pub(crate) matcher: Option<Matcher>, // select-by-pattern box while open
     pub(crate) match_last: String,       // last pattern used (runtime only, never saved)
@@ -136,6 +137,7 @@ thread_local! {
         drop_hover: HWND::default(),
         drop_open: None,
         crumb_hot: None,
+        kids: None,
         held: None,
         matcher: None,
         match_last: String::new(),
