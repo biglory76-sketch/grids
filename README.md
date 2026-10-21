@@ -23,6 +23,7 @@ Every pane is a real Windows Explorer view, so right-click menus, drag and drop,
 - **Columns are a pane setting**: their order, widths and sort stay as the pane moves from folder to folder, and any column can be made narrower than Explorer allows (Size stops at 90 px there).
 - **Folder favourites**: star a folder from its pane header, jump to it from the star list in the toolbar.
 - **Folder sizes**: the status line also shows the total size of selected folders, summed in the background (F5 sums again; "partial" when some items couldn't be read).
+- **View menu**: show hidden files and file name extensions — the same switches as Explorer's View > Show.
 - **Light and dark themes** with six selection colours each; the active pane is outlined and its header tinted.
 - **Pane colour labels**: right-click a pane header to give the pane one of those colours, shown as a thin strip along its top and behind its number, and next to its name in the ⇄ menu; saved with the session.
 - **Single instance**: running `grids.exe C:\a D:\b` or opening a `.grids` session file reuses the open window.

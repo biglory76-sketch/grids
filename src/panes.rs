@@ -747,21 +747,38 @@ pub(crate) unsafe fn set_layout(h: Vec<usize>) {
     redraw_all();
 }
 
-// Same switch as Explorer's "Hidden items" (global shell setting).
-pub(crate) unsafe fn hidden() -> bool {
+// Same switches as Explorer's View > Show "Hidden items" and "File name extensions"
+// (global shell settings): fShowAllObjects is bit 0, fShowExtensions bit 1.
+unsafe fn shell_flag(ssf: SSF_MASK, bit: i32) -> bool {
     let mut ss = SHELLSTATEA::default();
-    SHGetSetSettings(Some(&mut ss), SSF_SHOWALLOBJECTS, false);
-    ss._bitfield1 & 1 != 0
+    SHGetSetSettings(Some(&mut ss), ssf, false);
+    ss._bitfield1 & bit != 0
 }
 
-pub(crate) unsafe fn toggle_hidden() {
+unsafe fn toggle_shell_flag(ssf: SSF_MASK, bit: i32) {
     let mut ss = SHELLSTATEA::default();
-    SHGetSetSettings(Some(&mut ss), SSF_SHOWALLOBJECTS, false);
-    ss._bitfield1 ^= 1;
-    SHGetSetSettings(Some(&mut ss), SSF_SHOWALLOBJECTS, true);
+    SHGetSetSettings(Some(&mut ss), ssf, false);
+    ss._bitfield1 ^= bit;
+    SHGetSetSettings(Some(&mut ss), ssf, true);
     for i in 0..MAXP {
         if let Some(sv) = view_of::<IShellView>(i) {
             _ = sv.Refresh();
         }
     }
+}
+
+pub(crate) unsafe fn hidden() -> bool {
+    shell_flag(SSF_SHOWALLOBJECTS, 1)
+}
+
+pub(crate) unsafe fn toggle_hidden() {
+    toggle_shell_flag(SSF_SHOWALLOBJECTS, 1)
+}
+
+pub(crate) unsafe fn extensions() -> bool {
+    shell_flag(SSF_SHOWEXTENSIONS, 2)
+}
+
+pub(crate) unsafe fn toggle_extensions() {
+    toggle_shell_flag(SSF_SHOWEXTENSIONS, 2)
 }
