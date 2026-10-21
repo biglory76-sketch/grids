@@ -400,6 +400,51 @@ pub(crate) unsafe fn apply_filter(i: usize) {
     }
 }
 
+// Filter icon or Alt+↓ in the filter: show only one kind of file (folders stay), like Explorer's search "Kind".
+pub(crate) unsafe fn kind_menu(i: usize) {
+    let (Some(h), Some(f)) = (app(|a| a.panes[i].as_ref().map(|p| p.hwnd)), pane_ctl(i, ID_FILTER)) else { return };
+    let cur = filter_of(i);
+    // only an actual single selection: the focused item alone doesn't count
+    let arr = view_of::<IFolderView2>(i).and_then(|fv| fv.GetSelection(false).ok()).filter(|a| a.GetCount().is_ok_and(|n| n == 1));
+    let same = arr.and_then(|a| {
+        let it = a.GetItemAt(0).ok()?;
+        let dir = it.GetAttributes(SFGAO_FOLDER).ok()?.0 & SFGAO_FOLDER.0 != 0;
+        same_type(&pwstr(it.GetDisplayName(SIGDN_PARENTRELATIVEPARSING).ok()?), dir)
+    });
+    let Ok(menu) = CreatePopupMenu() else { return };
+    for (k, (en, ko, spec)) in FILE_KINDS.iter().enumerate() {
+        let flags = if cur == *spec { MF_STRING | MF_CHECKED } else { MF_STRING };
+        let shown = spec.split(';').take(2).collect::<Vec<_>>().join(", ");
+        _ = AppendMenuW(menu, flags, k + 1, &HSTRING::from(format!("{}\t{shown}, …", tr(en, ko))));
+    }
+    _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
+    let same_label = tr("Same type as the selected file", "선택한 파일과 같은 형식");
+    match &same {
+        Some(s) => _ = AppendMenuW(menu, MF_STRING, 100, &HSTRING::from(format!("{same_label} ({})", s.replace('&', "&&")))),
+        None => _ = AppendMenuW(menu, MF_STRING | MF_GRAYED, 100, &HSTRING::from(same_label)),
+    }
+    let clear = if cur.is_empty() && text_of(f).is_empty() { MF_STRING | MF_GRAYED } else { MF_STRING };
+    _ = AppendMenuW(menu, clear, 101, &HSTRING::from(tr("Clear filter", "필터 지우기")));
+    let mut rc = RECT::default();
+    _ = GetClientRect(h, &mut rc);
+    let pg = pane_geo(rc.right, rc.bottom, app(|a| a.dpi));
+    let mut at = POINT { x: pg.filt.left, y: pg.filt.bottom };
+    _ = ClientToScreen(h, &mut at);
+    let pick = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_LEFTALIGN | TPM_TOPALIGN, at.x, at.y, None, h, None).0 as usize;
+    _ = DestroyMenu(menu);
+    let spec = match pick {
+        1..=6 => Some(FILE_KINDS[pick - 1].2.to_string()),
+        100 => same,
+        101 => Some(String::new()),
+        _ => None,
+    };
+    if let Some(s) = spec {
+        _ = SetWindowTextW(f, &HSTRING::from(s));
+        apply_filter(i);
+    }
+    focus_view(i);
+}
+
 // Pane-sticky view mode and columns (order, widths, sort): remember them before leaving a folder,
 // re-apply after arriving. Columns seen in shell places (This PC ...) are theirs, not the pane's.
 pub(crate) unsafe fn save_view(i: usize) {

@@ -956,6 +956,22 @@ mod tests {
     }
 
     #[test]
+    fn file_kinds() {
+        for (_, _, spec) in FILE_KINDS {
+            assert_eq!(filter_spec(spec), spec);
+        }
+        assert_eq!(same_type("a.PDF", false).as_deref(), Some("*.PDF"));
+        assert_eq!(same_type("x.tar.gz", false).as_deref(), Some("*.gz"));
+        for (name, dir) in [("Makefile", false), (".gitignore", false), ("a.", false), ("a.b;c", false), ("photos.2024", true)] {
+            assert_eq!(same_type(name, dir), None, "{name}");
+        }
+        let filt = RECT { left: 100, top: 4, right: 250, bottom: 26 };
+        assert_eq!(filter_icon_rect(filt, 24), Some(RECT { right: 124, ..filt }));
+        assert_eq!(filter_icon_rect(RECT { right: 110, ..filt }, 24), Some(RECT { right: 110, ..filt }));
+        assert_eq!(filter_icon_rect(RECT { right: 100, ..filt }, 24), None);
+    }
+
+    #[test]
     fn held_keys() {
         let (enter, a) = (VK_RETURN.0, VK_A.0);
         assert_eq!(held_key(Some(enter), enter, true), (true, Some(enter))); // its repeat: swallowed

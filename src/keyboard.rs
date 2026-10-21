@@ -93,6 +93,7 @@ pub(crate) unsafe fn key(m: &MSG) -> bool {
                 _ => focus_view(a),
             }
         }
+        VK_DOWN if alt && !ctrl && !shift && filt => kind_menu(a), // a combo box's Alt+↓
         _ if addr || filt => return false,
         VK_C if ctrl && shift && !alt && list() => copy_paths(a),
         // held until released: one box / one inversion per press (Ctrl+Num+ stays Explorer's column fit)

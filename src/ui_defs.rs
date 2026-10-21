@@ -156,6 +156,16 @@ pub(crate) fn glyph(id: i32) -> &'static str {
     }
 }
 
+// Filter icon / Alt+↓ menu: (English, Korean, filter spec). No spaces, so filter_spec keeps them as they are.
+pub(crate) const FILE_KINDS: [(&str, &str, &str); 6] = [
+    ("Pictures", "사진", "*.jpg;*.jpeg;*.png;*.gif;*.bmp;*.webp;*.heic;*.tif;*.tiff;*.svg;*.ico"),
+    ("Videos", "동영상", "*.mp4;*.mkv;*.avi;*.mov;*.wmv;*.webm;*.m4v"),
+    ("Music", "음악", "*.mp3;*.flac;*.wav;*.m4a;*.aac;*.ogg;*.wma"),
+    ("Documents", "문서", "*.pdf;*.doc;*.docx;*.xls;*.xlsx;*.ppt;*.pptx;*.hwp;*.hwpx;*.txt;*.md;*.csv;*.rtf;*.odt"),
+    ("Archives", "압축", "*.zip;*.7z;*.rar;*.tar;*.gz;*.iso"),
+    ("Programs", "프로그램", "*.exe;*.msi;*.bat;*.cmd;*.ps1"),
+];
+
 pub(crate) const KEYS_EN: &str = "Ctrl+Tab / Ctrl+Shift+Tab\tNext / previous pane\n\
 Ctrl+1 … Ctrl+9\tGo to pane 1–9 (the number at the left of each pane header; hidden in very narrow panes)\n\
 Alt+Shift+← / → / ↑ / ↓\tPane to the left / right / above / below\n\
@@ -172,6 +182,7 @@ Num+ / Ctrl+Shift+A\tSelect files by pattern (*.jpg;*.png or part of a name; Shi
 Num−\tDeselect files by pattern\n\
 Num*\tInvert the selection\n\
 Ctrl+F\tFilter (*.pdf;*.txt or part of a name; folders always show)\n\
+Alt+↓ in the filter\tFile types: pictures, videos, documents ... (or click the filter's icon)\n\
 F6 / Shift+F6\tMove between file list, address bar, filter and folder tree\n\
 Enter / Esc\tApply / cancel the address or filter\n\
 Ctrl+H\tShow hidden files\n\
@@ -204,6 +215,7 @@ Num+ / Ctrl+Shift+A\t패턴으로 파일 선택 (*.jpg;*.png 또는 이름 일�
 Num−\t패턴으로 파일 선택 해제\n\
 Num*\t선택 반전\n\
 Ctrl+F\t필터 (*.pdf;*.txt 또는 이름 일부, 폴더는 항상 표시)\n\
+필터 칸에서 Alt+↓\t파일 종류: 사진·동영상·문서 … (필터 칸 아이콘 클릭도 가능)\n\
 F6 / Shift+F6\t파일 목록·주소창·필터·폴더 트리 사이 이동\n\
 Enter / Esc\t주소창·필터 적용 / 취소\n\
 Ctrl+H\t숨김 파일 표시\n\

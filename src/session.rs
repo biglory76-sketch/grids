@@ -426,6 +426,13 @@ pub(crate) fn filter_spec(text: &str) -> String {
     parts.collect::<Vec<_>>().join(";")
 }
 
+/// "a.PDF" -> "*.PDF" for the filter's "same type as the selected file"; folders and names without an extension: None.
+pub(crate) fn same_type(name: &str, is_dir: bool) -> Option<String> {
+    let (stem, ext) = name.rsplit_once('.')?;
+    let bad = is_dir || stem.is_empty() || ext.is_empty() || ext.contains([';', '*', '?']);
+    (!bad).then(|| format!("*.{ext}"))
+}
+
 
 // ---------- path names for titles and labels ----------
 

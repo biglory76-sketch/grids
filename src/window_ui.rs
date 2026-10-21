@@ -193,6 +193,13 @@ pub(crate) extern "system" fn pane_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 focus_view(i);
             }
         };
+        let on_kind_icon = |x: i32, y: i32| {
+            let dpi = app(|a| a.dpi);
+            let mut rc = RECT::default();
+            _ = GetClientRect(h, &mut rc);
+            filter_icon_rect(pane_geo(rc.right, rc.bottom, dpi).filt, 24 * dpi / 96)
+                .is_some_and(|r| x >= r.left && x < r.right && y >= r.top && y < r.bottom)
+        };
         match msg {
             WM_TIMER if wp.0 == TIMER_SETTLE => settle_cols(h),
             WM_SIZE => layout_pane(h),
@@ -200,15 +207,18 @@ pub(crate) extern "system" fn pane_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 let (x, y) = ((lp.0 & 0xffff) as i16 as i32, (lp.0 >> 16 & 0xffff) as i16 as i32);
                 let addr = addr_rect(h, app(|a| a.dpi));
                 let on_addr = x >= addr.left && x < addr.right && y >= addr.top && y < addr.bottom;
-                if let Some(i) = pane_of(h).filter(|_| !on_addr) {
+                if let Some(i) = pane_of(h).filter(|_| !on_addr && !on_kind_icon(x, y)) {
                     set_active(i);
                     toggle_zoom();
                 }
             }
-            // address bar crumbs (set_active already ran in pre_translate)
+            // filter icon: file types; address bar crumbs (set_active already ran in pre_translate)
             WM_LBUTTONDOWN => {
-                if let Some(i) = pane_of(h) {
-                    crumb_click(h, i, (lp.0 & 0xffff) as i16 as i32, (lp.0 >> 16 & 0xffff) as i16 as i32);
+                let (x, y) = ((lp.0 & 0xffff) as i16 as i32, (lp.0 >> 16 & 0xffff) as i16 as i32);
+                match pane_of(h) {
+                    Some(i) if on_kind_icon(x, y) => kind_menu(i),
+                    Some(i) => crumb_click(h, i, x, y),
+                    None => {}
                 }
             }
             WM_MOUSEMOVE => {

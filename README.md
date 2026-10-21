@@ -17,7 +17,7 @@ Every pane is a real Windows Explorer view, so right-click menus, drag and drop,
 - **Free layouts**: up to 4 columns, each with its own number of panes (1 to 4). Click the layout button for an even grid, or press and drag across it to set each column; six presets for common setups.
 - **Resizable everything**: drag any boundary between panes or the sidebar; double-click a boundary to even it out.
 - **Folder tree** that follows the active pane and keeps the current folder's name in view, even in deep folders.
-- **Per-pane toolbar**: address bar (led by the folder's icon, as in Explorer), back / forward / up, name filter (`*.pdf;*.txt` or any part of a name), open the selected folder in another pane (its columns come along, so you can set one pane up and copy it around) or copy / move the selected files to another pane's folder (up to 10,000), favourite toggle; drag a folder onto a pane's top bar to open it there.
+- **Per-pane toolbar**: address bar (led by the folder's icon, as in Explorer), back / forward / up, name filter (`*.pdf;*.txt` or any part of a name; click its icon or press Alt+↓ in it to pick a file type: pictures, videos, music, documents, archives, programs, or the selected file's type), open the selected folder in another pane (its columns come along, so you can set one pane up and copy it around) or copy / move the selected files to another pane's folder (up to 10,000), favourite toggle; drag a folder onto a pane's top bar to open it there.
 - **Sessions**: the layout, folders and each pane's columns (order, widths, sort) are saved automatically. Save named sessions and load them from cards that preview each layout; a green dot on the save button shows unsaved layout changes.
 - **Missing folders**: a local folder from a session, favourite, recent list or the command line that was deleted or renamed opens its nearest existing parent instead, and the status line says which folder was missing (8 s); it also leaves the recent list.
 - **Columns are a pane setting**: their order, widths and sort stay as the pane moves from folder to folder, and any column can be made narrower than Explorer allows (Size stops at 90 px there).
@@ -56,6 +56,7 @@ The exe is not code-signed, so Windows SmartScreen may warn the first time: choo
 | Alt+↓ | Recent folders (all panes, newest first; right-click ← / → too) |
 | Ctrl+L, Alt+D, F4 | Address bar: also `..` or a subfolder name, a file to open, or a command such as `cmd`, `wt`, `powershell` (runs in this pane's folder), or part of a recent or favourite folder's name |
 | Ctrl+F | Name filter |
+| Alt+↓ (in the filter) | File types menu (or click the filter's icon) |
 | F6 / Shift+F6 | Move between file list, address bar, filter and folder tree |
 | Enter / Esc | Apply / cancel the address or filter |
 | Ctrl+H | Show hidden files |

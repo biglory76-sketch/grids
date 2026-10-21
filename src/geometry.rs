@@ -149,6 +149,12 @@ pub(crate) fn pane_geo(w: i32, h: i32, dpi: i32) -> PaneGeo {
     }
 }
 
+// The search icon / filter chip at the filter pill's left, where the edit doesn't reach (it starts at s(24)).
+pub(crate) fn filter_icon_rect(filt: RECT, s24: i32) -> Option<RECT> {
+    let r = RECT { right: filt.right.min(filt.left + s24), ..filt };
+    (r.right > r.left).then_some(r)
+}
+
 // Colour label strip along the pane's top edge: inside the border, above the buttons and fields.
 pub(crate) fn tint_band(w: i32, dpi: i32, active: bool) -> RECT {
     let s = |v: i32| v * dpi / 96;

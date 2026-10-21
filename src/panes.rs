@@ -28,7 +28,8 @@ pub(crate) unsafe fn create_pane(i: usize) -> Result<Pane> {
     let edit = child(h, w!("EDIT"), w!(""), ES_AUTOHSCROLL as u32, plain, ID_EDIT, font);
     // Folder suggestions as you type, like Explorer's address bar; folders only, since navigate() only browses folders
     _ = SHAutoComplete(edit, SHACF_FILESYS_DIRS | SHACF_AUTOSUGGEST_FORCE_ON | SHACF_AUTOAPPEND_FORCE_OFF);
-    child(h, w!("EDIT"), w!(""), ES_AUTOHSCROLL as u32, plain, ID_FILTER, font);
+    let filt = child(h, w!("EDIT"), w!(""), ES_AUTOHSCROLL as u32, plain, ID_FILTER, font);
+    add_tip(filt, tr("Name filter (Ctrl+F) · icon or Alt+↓: file types", "이름 필터 (Ctrl+F) · 아이콘 또는 Alt+↓: 파일 종류"));
 
     let eb: IExplorerBrowser = CoCreateInstance(&ExplorerBrowser, None, CLSCTX_INPROC_SERVER)?;
     let site: IServiceProvider = Host(i).into();
