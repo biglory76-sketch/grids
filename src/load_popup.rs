@@ -40,7 +40,11 @@ pub(crate) fn load_name(card: &RECT, thumb: &RECT, dpi: i32) -> RECT {
 }
 
 pub(crate) fn ago(t: std::time::SystemTime) -> String {
-    let m = t.elapsed().map(|d| d.as_secs() / 60).unwrap_or(0);
+    ago_text(t.elapsed().map(|d| d.as_secs() / 60).unwrap_or(0), KO.load(Ordering::Relaxed))
+}
+
+pub(crate) fn ago_text(m: u64, ko: bool) -> String {
+    let tr = |en: &'static str, k: &'static str| if ko { k } else { en };
     match m {
         0 => tr("just now", "방금").into(),
         1..=59 => format!("{m}{}", tr(" min ago", "분 전")),

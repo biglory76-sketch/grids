@@ -74,6 +74,16 @@ pub(crate) fn header_colors(pane: HWND) -> (u32, u32) {
     })
 }
 
+// How far a hot/pressed button's fill moves toward its ink; the palette_contrast test reads it too.
+pub(crate) fn press_tint(tinted: bool, pressed: bool) -> f32 {
+    match (tinted, pressed) {
+        (true, true) => 0.3,
+        (true, false) => 0.18,
+        (false, true) => 0.13,
+        (false, false) => 0.07,
+    }
+}
+
 pub(crate) unsafe fn draw_button(d: &DRAWITEMSTRUCT) {
     let (hover, dpi, font, icon_font, main) = app(|a| (a.hover, a.dpi, a.font, a.icon_font, a.main));
     let parent = GetParent(d.hwndItem).unwrap_or_default();
@@ -85,13 +95,7 @@ pub(crate) unsafe fn draw_button(d: &DRAWITEMSTRUCT) {
     let tinted = bg != pal().bg && bg != pal().card;
     fill(dc, rc, bg);
     if pressed || hot {
-        let t = match (tinted, pressed) {
-            (true, true) => 0.3,
-            (true, false) => 0.18,
-            (false, true) => 0.13,
-            (false, false) => 0.07,
-        };
-        fill(dc, rc, blend(bg, ink, t));
+        fill(dc, rc, blend(bg, ink, press_tint(tinted, pressed)));
     }
     let fg = if tinted || hot || pressed { ink } else { pal().sub };
     if id == ID_FAV {

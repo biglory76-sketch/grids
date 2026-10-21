@@ -1078,6 +1078,124 @@ mod tests {
         assert_eq!(size_text(true, 0, false, None, true), " (크기 모름)");
     }
 
+    // WCAG 2 contrast ratio of two 0xRRGGBB colours.
+    fn contrast(a: u32, b: u32) -> f64 {
+        let lum = |c: u32| {
+            let lin = |v: u32| {
+                let s = v as f64 / 255.0;
+                if s <= 0.04045 { s / 12.92 } else { ((s + 0.055) / 1.055).powf(2.4) }
+            };
+            0.2126 * lin(c >> 16 & 0xFF) + 0.7152 * lin(c >> 8 & 0xFF) + 0.0722 * lin(c & 0xFF)
+        };
+        let (x, y) = (lum(a), lum(b));
+        (x.max(y) + 0.05) / (x.min(y) + 0.05)
+    }
+
+    // Every text-on-fill pair painted from a palette, in CONTRAST_FLOOR's order.
+    fn contrast_pairs(p: &Palette) -> Vec<(String, f64)> {
+        let mut v = vec![];
+        let mut add = |what: String, fg: u32, bg: u32| v.push((what, contrast(fg, bg)));
+        for (f, fname) in [(p.text, "text"), (p.sub, "sub")] {
+            for (b, bname) in [(p.bg, "bg"), (p.card, "card"), (p.pill, "pill")] {
+                add(format!("{fname} on {bname}"), f, b);
+            }
+        }
+        // selection colours (active header, colour label number, filter badge): plain, then hot/pressed header button
+        for (name, c) in p.accents {
+            let ink = on_color(c);
+            add(name.to_string(), ink, c);
+            add(format!("{name} hot"), ink, blend(c, ink, press_tint(true, false)));
+            add(format!("{name} pressed"), ink, blend(c, ink, press_tint(true, true)));
+        }
+        // uncoloured buttons: toolbar on bg, inactive header on card
+        for (b, bname) in [(p.bg, "bg"), (p.card, "card")] {
+            add(format!("text on {bname} hot"), p.text, blend(b, p.text, press_tint(false, false)));
+            add(format!("text on {bname} pressed"), p.text, blend(b, p.text, press_tint(false, true)));
+        }
+        // a filled ★ in an inactive header stays sub, also while hot/pressed
+        add("star".into(), p.sub, p.card);
+        add("star hot".into(), p.sub, blend(p.card, p.text, press_tint(false, false)));
+        add("star pressed".into(), p.sub, blend(p.card, p.text, press_tint(false, true)));
+        v
+    }
+
+    // Today's contrast of each pair, rounded down. A change may raise these; lowering one means fixing the
+    // colour or saying in review why that pair may get harder to read, then lowering just that value.
+    #[rustfmt::skip]
+    const CONTRAST_FLOOR: [[f64; 31]; 2] = [
+        [
+            13.02, 14.69, 13.14, 3.93, 4.44, 3.97, // text, sub on bg/card/pill
+            6.93, 5.18, 4.18, // Sky: plain, hot, pressed
+            8.51, 6.24, 4.97, // Gray
+            5.91, 4.46, 3.68, // Lavender
+            7.46, 5.53, 4.44, // Sage
+            7.79, 5.76, 4.61, // Peach
+            7.11, 5.27, 4.26, // Rose
+            11.46, 10.22, 12.89, 11.45, // text on bg hot/pressed, card hot/pressed
+            4.44, 3.89, 3.46, // star: plain, hot, pressed
+        ],
+        [
+            13.72, 12.02, 10.32, 6.39, 5.60, 4.81,
+            5.06, 3.55, 2.85,
+            8.72, 5.32, 3.89,
+            5.76, 3.90, 3.06,
+            4.30, 3.15, 2.60,
+            4.65, 3.36, 2.74,
+            4.82, 3.45, 2.78,
+            11.53, 9.69, 10.00, 8.33,
+            5.60, 4.66, 3.88,
+        ],
+    ];
+
+    #[test]
+    fn palette_contrast() {
+        for ((theme, p), floor) in [("light", &LIGHT), ("dark", &DARK)].into_iter().zip(&CONTRAST_FLOOR) {
+            let got = contrast_pairs(p);
+            assert_eq!(got.len(), floor.len());
+            for ((what, c), min) in got.iter().zip(floor) {
+                assert!(c >= min, "{theme} {what}: contrast {c:.2} < {min}");
+            }
+            // on_color picks whichever of INK and white reads better
+            for (name, c) in p.accents {
+                let ink = on_color(c);
+                let other = if ink == INK { 0xFFFFFF } else { INK };
+                assert!(contrast(ink, c) >= contrast(other, c), "{theme} {name}");
+            }
+        }
+        assert_eq!(blend(0x123456, 0xABCDEF, 0.0), 0x123456);
+        assert_eq!(blend(0x123456, 0xABCDEF, 1.0), 0xABCDEF);
+    }
+
+    #[test]
+    fn accent_names_line_up() {
+        let want = [("Sky", "하늘"), ("Gray", "그레이"), ("Lavender", "라벤더"), ("Sage", "세이지"), ("Peach", "피치"), ("Rose", "로즈")];
+        for (k, (en, ko)) in want.into_iter().enumerate() {
+            assert_eq!((ACCENT_EN[k], LIGHT.accents[k].0, DARK.accents[k].0), (en, ko, ko));
+        }
+        // the view menu's range ends at the literal 1405, below Custom...
+        assert_eq!(ID_ACCENT + want.len() - 1, 1405);
+        assert!(1405 < ID_ACCENT_PICK);
+        let s = Session::default();
+        assert_eq!((s.accent, s.accent_dark), (LIGHT.accents[1].1, DARK.accents[1].1));
+        assert_eq!(LIGHT.accents[1].0, "그레이");
+    }
+
+    #[test]
+    fn session_card_age() {
+        let cases = [
+            (0, "just now", "방금"),
+            (1, "1 min ago", "1분 전"),
+            (59, "59 min ago", "59분 전"),
+            (60, "1 h ago", "1시간 전"),
+            (1439, "23 h ago", "23시간 전"),
+            (1440, "1 d ago", "1일 전"),
+            (10080, "7 d ago", "7일 전"),
+        ];
+        for (m, en, ko) in cases {
+            assert_eq!((ago_text(m, false).as_str(), ago_text(m, true).as_str()), (en, ko), "{m} min");
+        }
+    }
+
     #[test]
     fn folder_size_collect() {
         let root = tree("collect", &[("f.bin".into(), 7), (r"d\x.bin".into(), 1)]);
