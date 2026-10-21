@@ -139,6 +139,14 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                     _ = PostMessageW(Some(h), WM_DRIVES, WPARAM(0), LPARAM(0));
                 }
             }
+            // Windows light/dark (or the accent) changed. Only queued: nothing is drawn inside the broadcast.
+            WM_SETTINGCHANGE => {
+                if lp.0 != 0 && PCWSTR(lp.0 as *const u16).to_string().is_ok_and(|s| s == "ImmersiveColorSet") {
+                    _ = PostMessageW(Some(h), WM_THEME_SYNC, WPARAM(0), LPARAM(0));
+                }
+                return DefWindowProcW(h, msg, wp, lp);
+            }
+            WM_THEME_SYNC => theme_sync(),
             // mid-drag or mid-resize, end_drag / WM_EXITSIZEMOVE pick it up instead
             WM_DRIVES => {
                 if !app(|a| a.drag.is_some() || a.sizing) && refresh_drives() {
@@ -215,8 +223,8 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 id if id == ID_TB_LOAD as usize => open_load(),
                 id if id == ID_TB_FAV as usize => open_favs(),
                 id if id == ID_TB_THEME as usize => {
-                    app(|a| a.s.dark ^= true);
-                    apply_theme();
+                    app(|a| (a.s.dark, a.s.follow) = (!a.s.dark, false)); // picked by hand: stop following Windows
+                    retheme();
                 }
                 id if id == ID_TB_VIEW as usize => popup_menu(app(|a| a.view_menu), ID_TB_VIEW),
                 id if (ID_DRIVE as usize..ID_DRIVE as usize + 26).contains(&id) => {
@@ -231,6 +239,14 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 ID_HIDDEN => toggle_hidden(),
                 ID_EXT => toggle_extensions(),
                 ID_DBLUP => app(|a| a.s.dblup ^= true),
+                ID_FOLLOW => {
+                    if app(|a| {
+                        a.s.follow ^= true;
+                        a.s.follow
+                    }) {
+                        _ = PostMessageW(Some(h), WM_THEME_SYNC, WPARAM(0), LPARAM(0));
+                    }
+                }
                 // flips what is really registered, so after a failed start one click retries
                 ID_HOTKEY => {
                     let was = app(|a| a.hot_on);
@@ -253,9 +269,10 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 _ => {}
             },
             WM_INITMENUPOPUP => {
-                let (menu, dblup, tree, accent, hot) = app(|a| (a.view_menu, a.s.dblup, a.s.tree, a.s.accent_now(), a.hot_on));
+                let (menu, dblup, tree, accent, hot, follow) = app(|a| (a.view_menu, a.s.dblup, a.s.tree, a.s.accent_now(), a.hot_on, a.s.follow));
                 let check = |id: usize, on: bool| CheckMenuItem(menu, id as u32, (MF_BYCOMMAND | if on { MF_CHECKED } else { MF_UNCHECKED }).0);
                 check(ID_TREE, tree);
+                check(ID_FOLLOW, follow);
                 check(ID_HIDDEN, hidden());
                 check(ID_EXT, extensions());
                 check(ID_DBLUP, dblup);
@@ -636,6 +653,7 @@ pub(crate) unsafe fn make_menus() -> Result<HMENU> {
     item(view, MF_STRING, ID_EXT, tr("Show file name extensions", "파일 확장명 표시"))?;
     item(view, MF_STRING, ID_DBLUP, tr("Double-click empty space: parent folder", "빈 곳 더블클릭: 위 폴더로"))?;
     item(view, MF_STRING, ID_HOTKEY, tr("Bring Grids to front from anywhere\tWin+Alt+E", "어디서나 Grids 불러오기\tWin+Alt+E"))?;
+    item(view, MF_STRING, ID_FOLLOW, tr("Follow Windows light/dark", "Windows 라이트·다크 따르기"))?;
     let colors = CreatePopupMenu()?;
     for (k, (name, _)) in LIGHT.accents.iter().enumerate() {
         item(colors, MF_STRING, ID_ACCENT + k, tr(ACCENT_EN[k], name))?;

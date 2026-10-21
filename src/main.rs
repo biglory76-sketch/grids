@@ -123,7 +123,11 @@ fn main() -> Result<()> {
                 }
             }
         };
-        let mut s = ini.map(|t| Session::parse(&t)).unwrap_or_default();
+        // a new install (no settings yet) follows Windows' light/dark
+        let mut s = ini.map(|t| Session::parse(&t)).unwrap_or(Session { follow: true, ..Session::default() });
+        if let Some(d) = theme_target(s.follow, system_dark(), s.dark) {
+            s.dark = d;
+        }
         match session_arg(&args).and_then(|f| std::fs::read_to_string(f).ok()) {
             Some(t) => s.take_layout(&Session::parse(&t)),
             None => apply_args(&mut s, args),
@@ -522,6 +526,18 @@ mod tests {
         // grid starting at pad: the old sidebar splitter is no longer a splitter
         let g = Geo { w: 1000, h: 600, top: 34, bot: 576, pad: 8, gap: 8, side: 240, tree: false, gx: 8, xs: vec![(8, 992)], ys: vec![vec![(34, 576)]], zoom: false };
         assert!((240..264).all(|x| !matches!(hit(&g, x, 100), Some(Hit::Side))));
+    }
+
+    #[test]
+    fn follow_theme_setting() {
+        assert!(!Session::parse("side=300\ndark=1\n").follow); // older ini: off
+        let s = Session::parse(&Session { follow: true, ..Session::default() }.to_ini());
+        assert!(s.follow);
+        assert_eq!(theme_target(false, Some(true), false), None); // not following
+        assert_eq!(theme_target(true, None, false), None); // Windows doesn't say
+        assert_eq!(theme_target(true, Some(true), true), None); // already there
+        assert_eq!(theme_target(true, Some(true), false), Some(true));
+        assert_eq!(theme_target(true, Some(false), true), Some(false));
     }
 
     #[test]

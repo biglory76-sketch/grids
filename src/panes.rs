@@ -568,8 +568,86 @@ pub(crate) unsafe fn uxtheme(ordinal: usize) -> FARPROC {
     GetProcAddress(m, PCSTR(ordinal as *const u8))
 }
 
+// Undoes dark_list on a pane's current list: what a list made in the light theme has. Its subclasses
+// stay on but check DARK_ON, so they do nothing now.
+pub(crate) unsafe fn light_list(pane: HWND) {
+    extern "system" fn collect(h: HWND, out: LPARAM) -> BOOL {
+        let mut c = [0u16; 32];
+        let n = unsafe { GetClassNameW(h, &mut c) } as usize;
+        if String::from_utf16_lossy(&c[..n]) == "SysListView32" {
+            unsafe { (*(out.0 as *mut Vec<HWND>)).push(h) };
+        }
+        true.into()
+    }
+    let mut lists: Vec<HWND> = Vec::new();
+    _ = EnumChildWindows(Some(pane), Some(collect), LPARAM(&mut lists as *mut _ as isize));
+    let (bg, text) = (GetSysColor(COLOR_WINDOW) as isize, GetSysColor(COLOR_WINDOWTEXT) as isize);
+    for lv in lists {
+        _ = SetWindowTheme(lv, w!("Explorer"), PCWSTR::null());
+        SendMessageW(lv, LVM_SETBKCOLOR, None, Some(LPARAM(bg)));
+        SendMessageW(lv, LVM_SETTEXTBKCOLOR, None, Some(LPARAM(bg)));
+        SendMessageW(lv, LVM_SETTEXTCOLOR, None, Some(LPARAM(text)));
+        let header = HWND(SendMessageW(lv, LVM_GETHEADER, None, None).0 as _);
+        if !header.0.is_null() {
+            _ = SetWindowTheme(header, w!("ItemsView"), PCWSTR::null());
+        }
+        let tip = HWND(SendMessageW(lv, LVM_GETTOOLTIPS, None, None).0 as _);
+        if !tip.0.is_null() {
+            _ = SetWindowTheme(tip, PCWSTR::null(), PCWSTR::null());
+        }
+        _ = InvalidateRect(Some(lv), None, true);
+    }
+}
+
+// Windows' "app mode" light/dark (Settings > Personalization > Colors); None where it isn't set.
+pub(crate) unsafe fn system_dark() -> Option<bool> {
+    use windows::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_DWORD};
+    let (mut v, mut n) = (0u32, 4u32);
+    let key = w!("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize");
+    let r = RegGetValueW(HKEY_CURRENT_USER, key, w!("AppsUseLightTheme"), RRF_RT_REG_DWORD, None, Some(&mut v as *mut u32 as _), Some(&mut n));
+    r.is_ok().then_some(v == 0)
+}
+
+// Switches the theme in place: panes keep their views, so history, filter, selection, scroll and a
+// half-typed address all stay. A view still navigating gets the theme from on_nav when it lands.
+pub(crate) unsafe fn retheme() {
+    theme_chrome();
+    let (panes, popups) = app(|a| (a.panes.iter().flatten().map(|p| p.hwnd).collect::<Vec<_>>(), [a.fav_popup, a.load, a.grid, a.keys_popup, a.peek, a.matcher.as_ref().map_or(HWND::default(), |m| m.h)]));
+    for p in panes {
+        if DARK_ON.load(Ordering::Relaxed) {
+            dark_list(p);
+        } else {
+            light_list(p);
+        }
+    }
+    redraw_all();
+    // open popups are owned, not children: repainted as they are
+    for h in popups.into_iter().filter(|h| IsWindow(Some(*h)).as_bool()) {
+        _ = RedrawWindow(Some(h), None, None, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN);
+    }
+}
+
+// Following Windows: switch if its setting differs from Grids' (the setting broadcast comes in bursts).
+pub(crate) unsafe fn theme_sync() {
+    let (follow, cur) = app(|a| (a.s.follow, a.s.dark));
+    if let Some(d) = theme_target(follow, system_dark(), cur) {
+        app(|a| a.s.dark = d);
+        retheme();
+    }
+}
+
 // Applies the current theme everywhere; panes are rebuilt so their Explorer views pick it up.
 pub(crate) unsafe fn apply_theme() {
+    theme_chrome();
+    for i in 0..MAXP {
+        destroy_pane(i);
+    }
+    relayout();
+    redraw_all();
+}
+
+// Everything but the panes' Explorer lists: tooltips, app mode (menus, scrollbars), title bar, tree, accent.
+pub(crate) unsafe fn theme_chrome() {
     let (main, dark, tree, accent, tip) = app(|a| (a.main, a.s.dark, a.tree_hwnd, a.s.accent_now(), a.tip));
     // tooltips: dark on dark, back to the default on light (these windows outlive the theme switch)
     let tip_theme = |t: HWND| {
@@ -599,11 +677,6 @@ pub(crate) unsafe fn apply_theme() {
         tip_theme(HWND(SendMessageW(tv, TVM_GETTOOLTIPS, None, None).0 as _));
     }
     set_accent(accent);
-    for i in 0..MAXP {
-        destroy_pane(i);
-    }
-    relayout();
-    redraw_all();
 }
 
 pub(crate) unsafe fn pick_accent() {

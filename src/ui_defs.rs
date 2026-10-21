@@ -29,6 +29,7 @@ pub(crate) const ID_ABOUT: usize = 1106;
 pub(crate) const ID_TREE: usize = 1107;
 pub(crate) const ID_EXT: usize = 1108;
 pub(crate) const ID_HOTKEY: usize = 1109;
+pub(crate) const ID_FOLLOW: usize = 1110;
 pub(crate) const HOME: &str = "https://github.com/efww/grids";
 pub(crate) const ID_ACCENT: usize = 1400; // + preset index
 pub(crate) const ID_ACCENT_PICK: usize = 1410;

@@ -15,6 +15,7 @@ pub(crate) struct Session {
     pub(crate) accent: u32,            // selection colour 0xRRGGBB, light theme
     pub(crate) accent_dark: u32,       // selection colour, dark theme
     pub(crate) dark: bool,
+    pub(crate) follow: bool,           // dark follows Windows' app light/dark setting (on for a new install)
     pub(crate) dblup: bool,            // double-click on empty space goes to the parent folder
     pub(crate) tree: bool,             // folder tree shown (side keeps its width while hidden)
     pub(crate) hotkey: bool,           // Win+Alt+E brings Grids to the front, app-wide (not part of a layout)
@@ -41,6 +42,7 @@ impl Default for Session {
             accent: LIGHT.accents[1].1, // gray
             accent_dark: DARK.accents[1].1,
             dark: false,
+            follow: false,
             dblup: true,
             tree: true,
             hotkey: true,
@@ -132,6 +134,7 @@ impl Session {
                 "accent" => s.accent = u32::from_str_radix(v.trim().trim_start_matches('#'), 16).unwrap_or(s.accent) & 0xFFFFFF,
                 "accent_dark" => s.accent_dark = u32::from_str_radix(v.trim(), 16).unwrap_or(s.accent_dark) & 0xFFFFFF,
                 "dark" => s.dark = v.trim() == "1",
+                "follow_theme" => s.follow = v.trim() == "1",
                 "dblup" => s.dblup = v.trim() != "0",
                 "tree" => s.tree = v.trim() != "0",
                 "hotkey" => s.hotkey = v.trim() != "0",
@@ -180,6 +183,7 @@ impl Session {
         o += &format!("side={}\ncols={}\n", self.side, join(&self.heights));
         o += &format!("colr={}\nrowr={rowr}\nactive={}\n", join(&self.colr), self.active);
         o += &format!("accent={:06X}\naccent_dark={:06X}\ndark={}\n", self.accent, self.accent_dark, self.dark as u8);
+        o += &format!("follow_theme={}\n", self.follow as u8);
         o += &format!("dblup={}\ntree={}\nhotkey={}\n", self.dblup as u8, self.tree as u8, self.hotkey as u8);
         o += &format!("lang={}\n", if self.ko { "ko" } else { "en" });
         if !self.file.is_empty() {
@@ -476,6 +480,11 @@ pub(crate) fn apply_args(s: &mut Session, args: Vec<String>) {
         s.set_heights(vec![n.div_ceil(c); c]);
     }
     s.active = 0;
+}
+
+// The theme to switch to when following Windows: only when on, Windows says, and it differs from now.
+pub(crate) fn theme_target(follow: bool, sys: Option<bool>, cur: bool) -> Option<bool> {
+    sys.filter(|&d| follow && d != cur)
 }
 
 pub(crate) fn ini_path() -> PathBuf {
