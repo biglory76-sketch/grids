@@ -1245,6 +1245,138 @@ mod tests {
     }
 
     #[test]
+    fn click_targets() {
+        let apart = |a: &RECT, b: &RECT| a.right <= b.left || b.right <= a.left || a.bottom <= b.top || b.bottom <= a.top;
+        let mid = |r: &RECT| ((r.left + r.right) / 2, (r.top + r.bottom) / 2);
+        // splitters: tree shown, one pane on the left, three stacked on the right
+        let h = [1, 3];
+        let mk = |zoom| {
+            let (top, bot, gx) = (34, 576, 256);
+            let ys = h.iter().map(|&n| cells(top, bot - top, &vec![1.0 / n as f64; n], 8)).collect();
+            Geo { w: 1000, h: 600, top, bot, pad: 8, gap: 8, side: 240, tree: true, gx, xs: cells(gx, 1000 - 8 - gx, &[0.5, 0.5], 8), ys, zoom }
+        };
+        let g = mk(false);
+        let (c0, c1) = (g.xs[0].1, g.xs[1].0);
+        assert_eq!(hit(&g, 250, 100), Some(Hit::Side));
+        assert_eq!((hit(&g, c0, 100), hit(&g, c1 - 1, 100)), (Some(Hit::Col(0)), Some(Hit::Col(0))));
+        assert_eq!((hit(&g, c0 - 1, 100), hit(&g, c1, 100)), (None, None));
+        for y in [g.top - 1, g.bot] {
+            assert_eq!((hit(&g, 250, y), hit(&g, c0, y)), (None, None));
+        }
+        // the gap between two stacked panes is that column's row splitter, and nothing in the other column
+        for i in 1..3 {
+            let (a, b) = (cell_rect(&g, &h, i), cell_rect(&g, &h, i + 1));
+            assert!(a.bottom < b.top);
+            for y in a.bottom..b.top {
+                assert_eq!(hit(&g, a.left + 5, y), Some(Hit::Row(1, i - 1)));
+                assert_eq!(hit(&g, g.xs[0].0 + 5, y), None);
+            }
+        }
+        // a click inside a pane never grabs a splitter
+        for i in 0..4 {
+            let r = cell_rect(&g, &h, i);
+            for x in (r.left..r.right).step_by(7).chain([r.right - 1]) {
+                for y in (r.top..r.bottom).step_by(7).chain([r.bottom - 1]) {
+                    assert_eq!(hit(&g, x, y), None, "pane {i} at {x},{y}");
+                }
+            }
+        }
+        let z = mk(true);
+        assert_eq!((hit(&z, 250, 100), hit(&z, c0, 100), hit(&z, g.xs[1].0 + 5, g.ys[1][0].1)), (Some(Hit::Side), None, None));
+
+        // favourites: the ✕ is the row's right s(32), rows tile without overlap, the frame is nobody's
+        for dpi in [96, 144] {
+            let s32 = 32 * dpi / 96;
+            for n in [0, 1, 5] {
+                let g = fav_geo(n, dpi);
+                assert_eq!(g.rows.len(), n);
+                if n == 0 {
+                    assert_eq!(g.h, fav_geo(1, dpi).h); // room for the "no favourites" line
+                }
+                assert_eq!((fav_hit(&g, 0, 0), fav_hit(&g, g.w - 1, g.h / 2), fav_hit(&g, g.w / 2, g.h - 1)), (None, None, None));
+                for (k, (row, x)) in g.rows.iter().enumerate() {
+                    assert!(row.left > 0 && row.right < g.w && row.top > 0 && row.bottom < g.h);
+                    assert_eq!((x.right - x.left, x.right, x.top, x.bottom), (s32, row.right, row.top, row.bottom));
+                    for (px, py) in [(row.right - 1, row.top), (row.right - s32, row.bottom - 1)] {
+                        assert_eq!(fav_hit(&g, px, py), Some((k, true)));
+                    }
+                    for (px, py) in [(row.right - s32 - 1, row.top), (row.left, row.bottom - 1)] {
+                        assert_eq!(fav_hit(&g, px, py), Some((k, false)));
+                    }
+                    assert_eq!(fav_hit(&g, row.left, row.bottom), (k + 1 < n).then_some((k + 1, false)));
+                    assert!(g.rows[k + 1..].iter().all(|(o, _)| apart(row, o)));
+                }
+            }
+        }
+
+        // session cards: centres load, gaps between cards don't, the two links stay clear of every card
+        for dpi in [96, 144] {
+            for n in [0, 3, 4, LOAD_MAX] {
+                let g = load_geo(n, dpi);
+                let mut all: Vec<RECT> = g.cards.iter().map(|c| c.0).collect();
+                all.extend([g.save_as, g.folder]);
+                for (k, r) in all.iter().enumerate() {
+                    assert!(r.left >= 0 && r.top >= 0 && r.right <= g.w && r.bottom <= g.h);
+                    assert!(all[k + 1..].iter().all(|o| apart(r, o)));
+                }
+                for (k, (card, ..)) in g.cards.iter().enumerate() {
+                    let (x, y) = mid(card);
+                    assert_eq!(load_hit(&g, x, y), Some(k));
+                    if let Some((next, ..)) = g.cards.get(k + 1).filter(|_| k % 3 < 2) {
+                        assert_eq!(load_hit(&g, (card.right + next.left) / 2, y), None);
+                    }
+                    if let Some((below, ..)) = g.cards.get(k + 3) {
+                        assert_eq!(load_hit(&g, x, (card.bottom + below.top) / 2), None);
+                    }
+                }
+                let ((sx, sy), (fx, fy)) = (mid(&g.save_as), mid(&g.folder));
+                assert_eq!((load_hit(&g, sx, sy), load_hit(&g, fx, fy)), (Some(LOAD_SAVE_AS), Some(LOAD_FOLDER)));
+            }
+        }
+
+        // layout picker: every cell answers to itself, a gap goes to the cell left / above, outside only when dragging
+        for dpi in [96, 144] {
+            let g = pick_geo(dpi);
+            let end = g.pad + 4 * g.cell + 3 * g.gap;
+            for r in 0..4 {
+                for c in 0..4 {
+                    let cell = pick_cell(&g, r, c);
+                    let (x, y) = mid(&cell);
+                    for clamp in [false, true] {
+                        assert_eq!(pick_at(&g, x, y, clamp), Some((r, c)));
+                    }
+                    if c < 3 {
+                        assert_eq!(pick_at(&g, cell.right + g.gap - 1, y, false), Some((r, c)));
+                    }
+                    if r < 3 {
+                        assert_eq!(pick_at(&g, x, cell.bottom + g.gap - 1, false), Some((r, c)));
+                    }
+                }
+            }
+            let y = mid(&pick_cell(&g, 1, 0)).1;
+            assert_eq!((pick_at(&g, g.pad - 1, y, false), pick_at(&g, end, y, false), pick_at(&g, g.pad, end, false)), (None, None, None));
+            assert_eq!((pick_at(&g, -50, y, true), pick_at(&g, g.w + 50, y, true)), (Some((1, 0)), Some((1, 3))));
+            assert_eq!((pick_at(&g, -50, -50, true), pick_at(&g, g.pad, g.h + 50, true)), (Some((0, 0)), Some((3, 0))));
+            for (i, p) in g.presets.iter().enumerate() {
+                assert!(p.top >= g.label.bottom && p.left >= 0 && p.right <= g.w && p.bottom <= g.h);
+                assert!(g.presets[i + 1..].iter().all(|o| apart(p, o)));
+            }
+        }
+
+        // header drop: LINK, else COPY, never MOVE (the shell would delete the source folder)
+        let (n, c, m, l) = (DROPEFFECT_NONE, DROPEFFECT_COPY, DROPEFFECT_MOVE, DROPEFFECT_LINK);
+        assert_eq!(drop_pick(m), n);
+        assert_eq!(drop_pick(DROPEFFECT(c.0 | m.0)), c);
+        assert_eq!(drop_pick(DROPEFFECT(l.0 | c.0 | m.0)), l);
+        assert_eq!(drop_pick(n), n);
+        for bits in 0..8u32 {
+            for extra in [0, DROPEFFECT_SCROLL.0] {
+                assert_eq!(drop_pick(DROPEFFECT(bits | extra)).0 & m.0, 0);
+            }
+        }
+    }
+
+    #[test]
     fn session_names() {
         assert_eq!(session_stem_ok("  my work "), Some("my work".into()));
         for ok in ["v1.2", "CONSOLE", "COM10", "lpt", "세션"] {
