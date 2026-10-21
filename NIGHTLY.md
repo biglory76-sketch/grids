@@ -60,3 +60,9 @@ Claude가 제안하고 gpt-6.1-sol이 동의한 개선을 사람 확인 없이 �
 |---|---|---|---|---|---|
 | #46 | 2026-10-21 13:18 | UX | Alt+Shift+방향키로 상하좌우 이웃 패널로 이동 (Windows Terminal·tmux·VS Code 창 이동식, 빈 슬롯은 실제 번호로 매핑) | Alt+Shift+→를 누르면 바로 오른쪽 패널로, Alt+Shift+↓를 누르면 바로 아래 패널로 커서가 옮겨 간다. 패널을 16개 띄워도 번호를 세거나 Ctrl+Tab을 여러 번 누를 필요 없이, 화면에 보이는 방향대로 이동할 수 있다. | 3 files changed, 63 insertions(+) |
 | #50 | 2026-10-21 13:20 | 기능 | 빈 곳 더블클릭을 두 번의 '목록 배경' 클릭으로 직접 판별해 상위 폴더로 이동 (MSAA 목록 역할 판정 + 조회 전후 탐색 세대 재확인, 세대는 마지막에 읽음) | Windows 11 자세히 보기를 포함해 모든 패널에서 파일 목록 아래쪽 같은 빈 곳을 더블클릭하면 다시 상위 폴더로 올라갑니다. 파일·그룹 머리·접기 버튼을 누른 경우, Ctrl·Shift를 누른 채 클릭한 경우, 클릭하는 사이 폴더가 바뀐 경우에는 올라가지 않습니다. | 2 files changed, 162 insertions(+), 12 deletions(-) |
+
+## 릴리즈 R9 · 2026-10-21 13:56 KST · 업데이트 1개
+
+| # | 구현 시각(KST) | 분류 | 업데이트 | 사용자에게 달라지는 것 | 변경 |
+|---|---|---|---|---|---|
+| #49 | 2026-10-21 13:41 | UX | F6 / Shift+F6 cycles focus through the active pane's file list, address bar, filter and folder tree (like Explorer and browsers), and keys Grids handles while the tree has focus no longer navigate a pane twice | Each press of F6 moves focus through the active pane's file list → address bar → filter → left folder tree, and Shift+F6 goes the other way. Arrow keys in the tree then take the active pane straight to that folder. Pressing Ctrl+Tab or Ctrl+number while the tree has focus no longer makes the pane reload its folder and lose its Forward history. | 3 files changed, 57 insertions(+), 3 deletions(-) |
