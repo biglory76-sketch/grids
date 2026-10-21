@@ -66,3 +66,11 @@ Claude가 제안하고 gpt-6.1-sol이 동의한 개선을 사람 확인 없이 �
 | # | 구현 시각(KST) | 분류 | 업데이트 | 사용자에게 달라지는 것 | 변경 |
 |---|---|---|---|---|---|
 | #49 | 2026-10-21 13:41 | UX | F6 / Shift+F6 cycles focus through the active pane's file list, address bar, filter and folder tree (like Explorer and browsers), and keys Grids handles while the tree has focus no longer navigate a pane twice | Each press of F6 moves focus through the active pane's file list → address bar → filter → left folder tree, and Shift+F6 goes the other way. Arrow keys in the tree then take the active pane straight to that folder. Pressing Ctrl+Tab or Ctrl+number while the tree has focus no longer makes the pane reload its folder and lose its Forward history. | 3 files changed, 57 insertions(+), 3 deletions(-) |
+
+## 릴리즈 R10 · 2026-10-21 14:10 KST · 업데이트 3개
+
+| # | 구현 시각(KST) | 분류 | 업데이트 | 사용자에게 달라지는 것 | 변경 |
+|---|---|---|---|---|---|
+| #59 | 2026-10-21 14:04 | UX | 폴더 트리 숨기기/보이기 토글 (Ctrl+Shift+E, 보기 메뉴 체크 항목) — 숨긴 동안 사이드바 폭을 덮어쓰지 않음 | Ctrl+Shift+E나 보기 메뉴의 '폴더 트리'로 왼쪽 트리를 숨기면 그 자리까지 패널이 넓어진다. 다시 누르면 전에 맞춰 둔 폭 그대로 트리가 돌아온다. 숨긴 동안 창을 줄이거나 경계를 끌어도, 재시작해도 그 폭은 유지된다. | 3 files changed, 63 insertions(+), 12 deletions(-) |
+| #53 | 2026-10-21 14:09 | 디자인 | 단축키 목록을 앱 테마에 맞춘 키캡 안내 창으로 (Ctrl+/ 로도 열기, 길게 눌러도 한 번만 토글, 직접 닫을 때만 포커스 복원) | 보기 메뉴의 '단축키'나 새 단축키 Ctrl+/로 여는 창이 흰 메시지 상자에서 Grids와 같은 색의 안내 창으로 바뀝니다. 키는 키캡 모양으로 한 열에 맞춰 놓이고 설명은 '키보드'와 '마우스·버튼'으로 나뉘며, 다크 테마에서는 어둡게 나옵니다. Ctrl+/를 누르고 있어도 한 번만 열리거나 닫히고, Esc나 Ctrl+/로 닫으면 하던 곳으로 돌아가며, 다른 곳을 누르면 거기에 그대로 머뭅니다. | 3 files changed, 359 insertions(+), 2 deletions(-) |
+| #44 | 2026-10-21 14:09 | 디자인 | 패널 주소 칸을 누를 수 있는 경로 조각으로 (Windows 탐색기·Finder 경로 막대식, 실제 탐색 경로 기준, 다 들어가면 접지 않음) | 각 패널 주소 칸이 긴 경로 글자 대신 'C: › Users › Public'처럼 폴더 조각으로 보입니다. 마우스를 올리면 그 조각이 강조되고, 누르면 그 폴더로 바로 갑니다. 다 들어가는 경로는 그대로 다 보입니다. 좁을 때만 앞쪽이 '…'로 접히고, '…'를 누르면 접힌 폴더 목록이 뜹니다. 현재 폴더나 빈 곳을 누르거나 Ctrl+L을 누르면 지금처럼 경로를 입력할 수 있습니다. | 3 files changed, 262 insertions(+), 4 deletions(-) |
