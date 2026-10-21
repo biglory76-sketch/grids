@@ -98,7 +98,8 @@ pub(crate) unsafe fn close_match(back: bool) {
 }
 
 pub(crate) unsafe fn set_note(note: String) {
-    app(|x| x.note = Some((note, Instant::now())));
+    // the status line keeps a note until this time; a past time would drop it on the next redraw
+    app(|x| x.note = Some((note, Instant::now() + Duration::from_secs(5))));
     update_status();
 }
 
