@@ -62,6 +62,9 @@ The exe is not code-signed, so Windows SmartScreen may warn the first time: choo
 | Ctrl+Shift+M | Maximize / restore the active pane (or double-click its header) |
 | Ctrl+Shift+E | Hide / show the folder tree (also View menu → Folder tree; its width is kept) |
 | Ctrl+Shift+C | Copy the full path of the selected items (or of the current folder) |
+| Num+ / Ctrl+Shift+A | Select files by pattern (`*.jpg;*.png` or part of a name; Shift+Enter deselects) |
+| Num− | Deselect files by pattern |
+| Num* | Invert the selection |
 | F2, Del, Ctrl+C / X / V, F5 | Same as Explorer |
 
 Double-clicking empty space in a pane goes up a folder (can be turned off in the view menu).
