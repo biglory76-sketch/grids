@@ -4,13 +4,20 @@ use crate::*;
 
 // Ground, the sidebar plate and the status line. Pane plates are child windows (paint_pane).
 pub(crate) unsafe fn paint_main(h: HWND) {
-    let (g, status, font, dpi) = app(|a| (geo(a), a.status.clone(), a.font, a.dpi));
+    let (g, status, font, dpi, hot) = app(|a| {
+        let g = geo(a);
+        let hot = a.gap_hot.filter(|_| a.drag.is_none()).and_then(|d| gap_line(&g, d, 2 * a.dpi / 96));
+        (g, a.status.clone(), a.font, a.dpi, hot.map(|r| (r, a.s.accent_now())))
+    });
     buffered(h, |dc, rc| {
         fill(dc, rc, pal().bg);
         if g.tree {
             let side = side_rect(&g);
             fill(dc, side, pal().card);
             frame(dc, side, 1, pal().line);
+        }
+        if let Some((r, c)) = hot {
+            fill(dc, r, c); // where to grab; dragging swaps it for the guide bar in the same colour
         }
         let st = status_rect(&g);
         text(dc, RECT { left: g.pad + 4 * dpi / 96, ..st }, &status, font, pal().sub, DT_LEFT);

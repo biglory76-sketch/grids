@@ -172,6 +172,25 @@ pub(crate) fn tint_name(k: u8) -> &'static str {
     tr(ACCENT_EN[k as usize - 1], LIGHT.accents[k as usize - 1].0)
 }
 
+/// A `t` px line down the middle of splitter `d`: the drag guide and the hover mark. None if `g` has no such splitter.
+pub(crate) fn gap_line(g: &Geo, d: Hit, t: i32) -> Option<RECT> {
+    let vbar = |x: i32| RECT { left: x - t / 2, top: g.top, right: x - t / 2 + t, bottom: g.bot };
+    match d {
+        Hit::Side => g.tree.then(|| vbar(g.pad + g.side + g.gap / 2)),
+        Hit::Col(k) if !g.zoom => {
+            g.xs.get(k + 1)?;
+            Some(vbar(g.xs[k].1 + g.gap / 2))
+        }
+        Hit::Row(c, k) if !g.zoom => {
+            let (x0, x1) = *g.xs.get(c)?;
+            g.ys.get(c)?.get(k + 1)?;
+            let y = g.ys[c][k].1 + g.gap / 2;
+            Some(RECT { left: x0, top: y - t / 2, right: x1, bottom: y - t / 2 + t })
+        }
+        _ => None,
+    }
+}
+
 pub(crate) fn hit(g: &Geo, x: i32, y: i32) -> Option<Hit> {
     if y < g.top || y >= g.bot {
         return None;
@@ -189,4 +208,34 @@ pub(crate) fn hit(g: &Geo, x: i32, y: i32) -> Option<Hit> {
     // row gaps belong to one column: rows no longer line up across columns
     let c = g.xs.iter().position(|&(a, b)| x >= a && x < b)?;
     between(&g.ys[c], y).map(|k| Hit::Row(c, k))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gap_lines() {
+        // tree shown, two columns of 2 and 1 rows
+        let two = |tree: bool, zoom: bool| Geo {
+            w: 1000, h: 600, top: 34, bot: 576, pad: 8, gap: 8, side: 240, tree, gx: 256, zoom,
+            xs: vec![(256, 620), (628, 992)],
+            ys: vec![vec![(34, 300), (308, 576)], vec![(34, 576)]],
+        };
+        let g = two(true, false);
+        for d in [Hit::Side, Hit::Col(0), Hit::Row(0, 0)] {
+            let r = gap_line(&g, d, 2).unwrap();
+            assert_eq!(hit(&g, (r.left + r.right) / 2, (r.top + r.bottom) / 2), Some(d), "{d:?}");
+        }
+        // no such splitter: a stale number never reaches past the vectors
+        for d in [Hit::Col(1), Hit::Col(5), Hit::Row(1, 0), Hit::Row(0, 1), Hit::Row(3, 0)] {
+            assert_eq!(gap_line(&g, d, 2), None, "{d:?}");
+        }
+        let one = Geo { gx: 8, xs: vec![(8, 992)], ys: vec![vec![(34, 576)]], ..two(false, false) };
+        assert_eq!(gap_line(&one, Hit::Row(3, 0), 2), None);
+        assert_eq!(gap_line(&one, Hit::Row(0, 0), 2), None);
+        assert_eq!(gap_line(&one, Hit::Side, 2), None);
+        assert_eq!(gap_line(&two(true, true), Hit::Col(0), 2), None);
+        assert_eq!(gap_line(&two(true, true), Hit::Row(0, 0), 2), None);
+    }
 }

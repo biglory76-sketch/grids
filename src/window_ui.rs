@@ -13,6 +13,25 @@ pub(crate) unsafe fn cursor_for(h: HWND) -> Option<Hit> {
     app(|a| hit(&geo(a), pt.x, pt.y))
 }
 
+// Marks the splitter under the mouse (paint_main); only the old and new lines are repainted.
+pub(crate) unsafe fn gap_hover(h: HWND, d: Option<Hit>) {
+    let (old, lines) = app(|a| {
+        let old = std::mem::replace(&mut a.gap_hot, d);
+        let g = geo(a);
+        (old, [old, d].map(|k| k.and_then(|k| gap_line(&g, k, 2 * a.dpi / 96))))
+    });
+    if old == d {
+        return;
+    }
+    for r in lines.iter().flatten() {
+        _ = InvalidateRect(Some(h), Some(r), false);
+    }
+    if old.is_none() {
+        let mut t = TRACKMOUSEEVENT { cbSize: size_of::<TRACKMOUSEEVENT>() as u32, dwFlags: TME_LEAVE, hwndTrack: h, dwHoverTime: 0 };
+        _ = TrackMouseEvent(&mut t);
+    }
+}
+
 pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     unsafe {
         match msg {
@@ -94,12 +113,17 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
             WM_LBUTTONDOWN => {
                 let (x, y) = xy(lp);
                 if let Some(d) = app(|a| hit(&geo(a), x, y)) {
+                    gap_hover(h, None);
                     app(|a| a.drag = Some(d));
                     SetCapture(h);
                 }
             }
+            WM_MOUSELEAVE => gap_hover(h, None),
             WM_MOUSEMOVE => {
                 let (x, y) = xy(lp);
+                if let Some(d) = app(|a| a.drag.is_none().then(|| hit(&geo(a), x, y))) {
+                    gap_hover(h, d);
+                }
                 let moved = app(|a| {
                     let d = a.drag?;
                     let g = geo(a);

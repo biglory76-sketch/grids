@@ -137,6 +137,7 @@ pub(crate) unsafe fn layout_pane(h: HWND) {
 pub(crate) unsafe fn relayout() {
     sync_panes();
     let Some((main, moves, label, shown)) = app(|a| {
+        a.gap_hot = None; // its splitter may be gone; the whole window is repainted below
         if a.main.0.is_null() {
             return None;
         }
@@ -196,14 +197,8 @@ pub(crate) unsafe fn show_bars() {
     let Some((main, bars, rects)) = app(|a| {
         let d = a.drag?;
         let g = geo(a);
-        let t = 3 * a.dpi / 96;
-        let vbar = |x: i32| RECT { left: x - t / 2, top: g.top, right: x - t / 2 + t, bottom: g.bot };
-        let hbar = |(x0, x1): (i32, i32), y: i32| RECT { left: x0, top: y - t / 2, right: x1, bottom: y - t / 2 + t };
-        let rects = match d {
-            Hit::Side => [Some(vbar(g.pad + g.side + g.gap / 2)), None],
-            Hit::Col(k) => [Some(vbar(g.xs[k].1 + g.gap / 2)), None],
-            Hit::Row(c, k) => [None, Some(hbar(g.xs[c], g.ys[c][k].1 + g.gap / 2))],
-        };
+        let r = gap_line(&g, d, 3 * a.dpi / 96);
+        let rects = if matches!(d, Hit::Row(..)) { [None, r] } else { [r, None] };
         Some((a.main, a.bars, rects))
     }) else {
         return;
