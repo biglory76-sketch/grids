@@ -201,6 +201,7 @@ Alt+↑\tParent folder\n\
 Alt+↓\tRecent folders (all panes, newest first)\n\
 Ctrl+L, Alt+D, F4\tAddress bar: also .. or a subfolder name, a file to open, or a command such as cmd, wt, powershell (runs in this pane's folder)\n\
 Ctrl+B\tFavourites list (↑/↓ to choose, Enter to open, Del to remove)\n\
+Ctrl+/\tKeyboard shortcuts (this list)\n\
 Ctrl+Shift+M\tMaximize / restore the active pane (or double-click its header)\n\
 Ctrl+Shift+E\tHide / show the folder tree (its width is kept)\n\
 Ctrl+Shift+C\tCopy the full path of the selected items (or of the current folder)\n\
@@ -226,6 +227,7 @@ Alt+↑\t상위 폴더\n\
 Alt+↓\t최근 폴더 (모든 패널, 최근 순)\n\
 Ctrl+L, Alt+D, F4\t주소창: .. 이나 하위 폴더 이름, 열 파일, cmd·wt·powershell 같은 명령도 가능(이 패널 폴더에서 실행)\n\
 Ctrl+B\t즐겨찾기 목록 (↑/↓ 고르기, Enter 열기, Del 빼기)\n\
+Ctrl+/\t단축키 목록 (이 창)\n\
 Ctrl+Shift+M\t선택한 패널 크게 보기 / 복원 (머리줄 더블클릭도 가능)\n\
 Ctrl+Shift+E\t폴더 트리 숨기기 / 보이기 (폭은 그대로 유지)\n\
 Ctrl+Shift+C\t선택한 항목(없으면 현재 폴더)의 전체 경로 복사\n\
@@ -757,6 +759,9 @@ struct App {
     fav_closed: Option<Instant>,
     fav_hot: Option<(usize, bool)>, // (row, on its ✕)
     fav_prev: HWND,                 // focus before the popup opened; Esc goes back there
+    keys_popup: HWND, // keyboard shortcuts window while open
+    keys_prev: HWND,  // focus before it opened; Esc / ✕ / Ctrl+/ go back there
+    keys_scroll: i32,
     cards: Vec<(PathBuf, Session, String)>,
     hover: HWND, // owner-drawn button under the mouse
     tip: HWND,
@@ -801,6 +806,9 @@ thread_local! {
         fav_closed: None,
         fav_hot: None,
         fav_prev: HWND::default(),
+        keys_popup: HWND::default(),
+        keys_prev: HWND::default(),
+        keys_scroll: 0,
         cards: Vec::new(),
         hover: HWND::default(),
         tip: HWND::default(),
@@ -948,6 +956,20 @@ unsafe fn text(dc: HDC, mut r: RECT, s: &str, font: HFONT, rgb: u32, align: DRAW
     SetTextColor(dc, cref(rgb));
     DrawTextW(dc, &mut w, &mut r, align | DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX | DT_END_ELLIPSIS);
     SelectObject(dc, old);
+}
+
+// Multi-line text wrapped at r's width (text() is single-line). calc only measures, with the same font and flags.
+unsafe fn wrap_text(dc: HDC, mut r: RECT, s: &str, font: HFONT, rgb: u32, calc: bool) -> (i32, i32) {
+    let mut w: Vec<u16> = s.encode_utf16().collect();
+    if w.is_empty() {
+        return (0, 0); // see text()
+    }
+    let old = SelectObject(dc, font.into());
+    SetBkMode(dc, TRANSPARENT);
+    SetTextColor(dc, cref(rgb));
+    DrawTextW(dc, &mut w, &mut r, DT_WORDBREAK | DT_EDITCONTROL | DT_NOPREFIX | if calc { DT_CALCRECT } else { DRAW_TEXT_FORMAT(0) });
+    SelectObject(dc, old);
+    (r.right - r.left, r.bottom - r.top)
 }
 
 // Paints only the invalid area into an off-screen buffer and blits once (no flicker mid-drag).
@@ -3802,6 +3824,274 @@ extern "system" fn fav_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESUL
     }
 }
 
+// ---------- keyboard shortcuts window (Ctrl+/ or the view menu) ----------
+
+struct KeyRow {
+    keys: Vec<String>, // keycaps; in the mouse section, one plain name
+    desc: String,
+}
+
+// KEYS_EN / KEYS_KO split into [keyboard, mouse & buttons]. Keys break only at ", " and " / ",
+// so "Ctrl+C/X/V" and "Ctrl+/" stay one cap; a mouse line without ": " continues the one above.
+fn key_rows(text: &str) -> [Vec<KeyRow>; 2] {
+    let (keys, mouse) = text.split_once("\n\n").unwrap_or((text, ""));
+    let kb = keys
+        .lines()
+        .filter_map(|l| l.split_once('\t'))
+        .map(|(k, d)| KeyRow { keys: k.split(", ").flat_map(|p| p.split(" / ")).map(String::from).collect(), desc: d.into() })
+        .collect();
+    let mut ms: Vec<KeyRow> = Vec::new();
+    for l in mouse.lines() {
+        match (l.split_once(": "), ms.last_mut()) {
+            (Some((k, d)), _) => ms.push(KeyRow { keys: vec![k.into()], desc: d.into() }),
+            (None, Some(last)) => {
+                last.desc.push('\n');
+                last.desc.push_str(l);
+            }
+            (None, None) => {}
+        }
+    }
+    [kb, ms]
+}
+
+struct KeyGeoRow {
+    sec: usize,
+    row: RECT,
+    keys: Vec<RECT>, // keycaps, or the text of a mouse-section name
+    desc: RECT,      // description text
+}
+
+struct KeysGeo {
+    h: i32,    // content height (below the fixed title bar)
+    titles: [RECT; 2],
+    rows: Vec<KeyGeoRow>,
+}
+
+const KEYS_PAD: i32 = 20;
+
+// Content layout in px. measure(text, max_w, cap): a cap's one-line size, or text wrapped at max_w.
+// Painting and the window size both use this, so what was measured is what gets drawn.
+fn keys_layout(secs: &[Vec<KeyRow>; 2], width: i32, dpi: i32, measure: &dyn Fn(&str, i32, bool) -> (i32, i32)) -> KeysGeo {
+    let s = |v: i32| v * dpi / 96;
+    let (pad, gap, cx, cy, cgap) = (s(KEYS_PAD), s(16), s(7), s(3), s(5));
+    let inner = (width - 2 * pad).max(s(80));
+    let lh = measure("Ag", inner, true).1;
+    let cap_w = |t: &str| measure(t, inner, true).0 + 2 * cx;
+    let (mut one, mut group) = (0, 0);
+    for r in &secs[0] {
+        let caps: Vec<i32> = r.keys.iter().map(|k| cap_w(k)).collect();
+        one = one.max(caps.iter().copied().max().unwrap_or(0));
+        group = group.max(caps.iter().sum::<i32>() + cgap * (caps.len() as i32 - 1).max(0));
+    }
+    // widest single cap, or a whole row of caps up to 40%; never over half (a wider cap gets an ellipsis)
+    let key_w = one.max(group.min(inner * 2 / 5)).min(inner / 2);
+    let (dx, dw, ch) = (pad + key_w + gap, inner - key_w - gap, lh + 2 * cy);
+    let mut y = pad;
+    let mut titles = [RECT::default(); 2];
+    let mut rows = Vec::new();
+    for (sec, list) in secs.iter().enumerate() {
+        if sec > 0 {
+            y += s(14);
+        }
+        titles[sec] = RECT { left: pad, top: y, right: pad + inner, bottom: y + lh };
+        y += lh + s(6);
+        for r in list {
+            let mut keys = Vec::new();
+            if sec == 0 {
+                let (mut x, mut line) = (0, 0);
+                for k in &r.keys {
+                    let w = cap_w(k).min(key_w);
+                    if x > 0 && x + w > key_w {
+                        (x, line) = (0, line + 1);
+                    }
+                    let top = y + line * (ch + cgap);
+                    keys.push(RECT { left: pad + x, top, right: pad + x + w, bottom: top + ch });
+                    x += w + cgap;
+                }
+            } else {
+                let h = measure(&r.keys[0], key_w, false).1;
+                keys.push(RECT { left: pad, top: y + cy, right: pad + key_w, bottom: y + cy + h });
+            }
+            let dh = measure(&r.desc, dw, false).1;
+            let desc = RECT { left: dx, top: y + cy, right: dx + dw, bottom: y + cy + dh };
+            let bottom = keys.iter().map(|k| k.bottom + if sec == 0 { 0 } else { cy }).chain([desc.bottom + cy]).max().unwrap_or(y);
+            rows.push(KeyGeoRow { sec, row: RECT { left: pad, top: y, right: pad + inner, bottom }, keys, desc });
+            y = bottom + s(6);
+        }
+    }
+    KeysGeo { h: y - s(6) + pad, titles, rows }
+}
+
+unsafe fn keys_geo(width: i32, dpi: i32) -> KeysGeo {
+    let font = app(|a| a.font);
+    let dc = GetDC(None);
+    let measure = |t: &str, max_w: i32, cap: bool| {
+        if !cap {
+            return wrap_text(dc, RECT { right: max_w, ..Default::default() }, t, font, 0, true);
+        }
+        let old = SelectObject(dc, font.into());
+        let mut sz = SIZE::default();
+        _ = GetTextExtentPoint32W(dc, &t.encode_utf16().collect::<Vec<_>>(), &mut sz);
+        SelectObject(dc, old);
+        (sz.cx, sz.cy)
+    };
+    let g = keys_layout(&key_rows(tr(KEYS_EN, KEYS_KO)), width, dpi, &measure);
+    ReleaseDC(None, dc);
+    g
+}
+
+fn keys_head(dpi: i32) -> i32 {
+    44 * dpi / 96
+}
+
+fn keys_close(width: i32, dpi: i32) -> RECT {
+    let s = |v: i32| v * dpi / 96;
+    RECT { left: width - s(44), top: s(6), right: width - s(12), bottom: s(38) }
+}
+
+unsafe fn open_keys() {
+    let (main, dpi, open) = app(|a| (a.main, a.dpi, a.keys_popup));
+    if !open.0.is_null() {
+        _ = SetFocus(Some(open));
+        return;
+    }
+    let mut mi = MONITORINFO { cbSize: size_of::<MONITORINFO>() as u32, ..Default::default() };
+    _ = GetMonitorInfoW(MonitorFromWindow(main, MONITOR_DEFAULTTONEAREST), &mut mi);
+    let work = mi.rcWork;
+    let w = (760 * dpi / 96).min((work.right - work.left) * 9 / 10);
+    let h = (keys_head(dpi) + keys_geo(w, dpi).h).min((work.bottom - work.top) * 9 / 10);
+    let mut rc = RECT::default();
+    _ = GetWindowRect(main, &mut rc);
+    let x = ((rc.left + rc.right - w) / 2).clamp(work.left, work.right - w);
+    let y = ((rc.top + rc.bottom - h) / 2).clamp(work.top, work.bottom - h);
+    let prev = GetFocus();
+    app(|a| (a.keys_prev, a.keys_scroll) = (prev, 0));
+    let title = HSTRING::from(tr("Keyboard shortcuts", "단축키"));
+    let Ok(p) = CreateWindowExW(WS_EX_TOOLWINDOW, w!("GridsKeys"), &title, WS_POPUP | WS_VISIBLE, x, y, w, h, Some(main), None, None, None) else {
+        return;
+    };
+    let square = DWMWCP_DONOTROUND;
+    _ = DwmSetWindowAttribute(p, DWMWA_WINDOW_CORNER_PREFERENCE, &square as *const _ as _, 4);
+    app(|a| a.keys_popup = p);
+}
+
+// Esc, ✕ or Ctrl+/ again: back to where the user was. (Losing activation just closes: focus is already elsewhere.)
+unsafe fn close_keys() {
+    let (h, prev, active) = app(|a| (a.keys_popup, a.keys_prev, a.s.active));
+    _ = DestroyWindow(h);
+    if !prev.0.is_null() && IsWindow(Some(prev)).as_bool() {
+        _ = SetFocus(Some(prev));
+    } else {
+        focus_view(active);
+    }
+}
+
+unsafe fn toggle_keys() {
+    if app(|a| a.keys_popup.0.is_null()) {
+        open_keys();
+    } else {
+        close_keys();
+    }
+}
+
+unsafe fn keys_scroll_to(h: HWND, to: impl FnOnce(i32, i32) -> i32) {
+    let mut rc = RECT::default();
+    _ = GetClientRect(h, &mut rc);
+    let dpi = app(|a| a.dpi);
+    let page = rc.bottom - keys_head(dpi);
+    let max = (keys_geo(rc.right, dpi).h - page).max(0);
+    if app(|a| {
+        let y = to(a.keys_scroll, page).clamp(0, max);
+        std::mem::replace(&mut a.keys_scroll, y) != y
+    }) {
+        _ = InvalidateRect(Some(h), None, false);
+    }
+}
+
+unsafe fn paint_keys(h: HWND) {
+    let (dpi, font, small, icon_font, scroll) = app(|a| (a.dpi, a.font, a.small_font, a.icon_font, a.keys_scroll));
+    let mut rc = RECT::default();
+    _ = GetClientRect(h, &mut rc);
+    let g = keys_geo(rc.right, dpi);
+    let rows = key_rows(tr(KEYS_EN, KEYS_KO));
+    let s = |v: i32| v * dpi / 96;
+    let head = keys_head(dpi);
+    let down = |r: RECT| RECT { top: r.top + head - scroll, bottom: r.bottom + head - scroll, ..r };
+    buffered(h, |dc, rc| {
+        fill(dc, rc, pal().card);
+        let names = [tr("Keyboard", "키보드"), tr("Mouse & buttons", "마우스·버튼")];
+        for (t, r) in names.iter().zip(g.titles) {
+            text(dc, down(r), t, small, pal().sub, DT_LEFT);
+        }
+        for (gr, r) in g.rows.iter().zip(rows.iter().flatten()) {
+            let row = down(gr.row);
+            if row.bottom < head || row.top > rc.bottom {
+                continue; // scrolled out of view
+            }
+            for (k, kr) in r.keys.iter().zip(&gr.keys) {
+                let kr = down(*kr);
+                if gr.sec == 0 {
+                    fill(dc, kr, pal().pill);
+                    frame(dc, kr, 1, pal().line);
+                    text(dc, RECT { left: kr.left + s(4), right: kr.right - s(4), ..kr }, k, font, pal().text, DT_CENTER);
+                } else {
+                    wrap_text(dc, kr, k, font, pal().text, false);
+                }
+            }
+            wrap_text(dc, down(gr.desc), &r.desc, font, pal().text, false);
+        }
+        // fixed title bar over the scrolled content
+        let bar = RECT { bottom: head, ..rc };
+        fill(dc, bar, pal().card);
+        fill(dc, RECT { top: head - 1, ..bar }, pal().line);
+        text(dc, RECT { left: s(KEYS_PAD), ..bar }, tr("Keyboard shortcuts", "단축키"), font, pal().text, DT_LEFT);
+        text(dc, keys_close(rc.right, dpi), "\u{E711}", icon_font, pal().sub, DT_CENTER);
+        let page = rc.bottom - head;
+        if g.h > page {
+            let th = (page * page / g.h).max(s(24));
+            let top = head + scroll * (page - th) / (g.h - page);
+            fill(dc, RECT { left: rc.right - s(6), top, right: rc.right - s(3), bottom: top + th }, pal().sub);
+        }
+        frame(dc, rc, 1, pal().line);
+    });
+}
+
+extern "system" fn keys_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
+    unsafe {
+        let dpi = app(|a| a.dpi);
+        let s = |v: i32| v * dpi / 96; // not app() inside: keys_scroll_to calls these while APP is borrowed
+        match msg {
+            WM_PAINT => paint_keys(h),
+            WM_ERASEBKGND => return LRESULT(1),
+            WM_MOUSEWHEEL => keys_scroll_to(h, |y, _| y - s((wp.0 >> 16) as i16 as i32)), // 120 px a notch
+            WM_LBUTTONUP => {
+                let (x, y) = xy(lp);
+                let mut rc = RECT::default();
+                _ = GetClientRect(h, &mut rc);
+                let r = keys_close(rc.right, dpi);
+                if x >= r.left && x < r.right && y >= r.top && y < r.bottom {
+                    close_keys();
+                }
+            }
+            // reaches here because key() leaves these to the focused window
+            WM_KEYDOWN => match VIRTUAL_KEY(wp.0 as u16) {
+                VK_ESCAPE => close_keys(),
+                VK_UP => keys_scroll_to(h, |y, _| y - s(40)),
+                VK_DOWN => keys_scroll_to(h, |y, _| y + s(40)),
+                VK_PRIOR => keys_scroll_to(h, |y, p| y - p * 9 / 10),
+                VK_NEXT => keys_scroll_to(h, |y, p| y + p * 9 / 10),
+                VK_HOME => keys_scroll_to(h, |_, _| 0),
+                VK_END => keys_scroll_to(h, |_, _| i32::MAX),
+                _ => {}
+            },
+            WM_ACTIVATE if (wp.0 & 0xffff) as u32 == WA_INACTIVE => _ = PostMessageW(Some(h), WM_CLOSE, WPARAM(0), LPARAM(0)),
+            WM_DESTROY => app(|a| a.keys_popup = HWND::default()),
+            _ => return DefWindowProcW(h, msg, wp, lp),
+        }
+        LRESULT(0)
+    }
+}
+
 unsafe fn popup_menu(menu: HMENU, id: i32) {
     let main = app(|a| a.main);
     let mut rc = RECT::default();
@@ -4040,6 +4330,12 @@ unsafe fn key(m: &MSG) -> bool {
         VK_H if ctrl => toggle_hidden(),
         VK_S if ctrl => save_current(),
         VK_B if ctrl && !shift && !alt => open_favs(),
+        // auto-repeat (bit 30) is swallowed: holding Ctrl+/ toggles once
+        VK_OEM_2 if ctrl && !shift && !alt => {
+            if m.lParam.0 & (1 << 30) == 0 {
+                toggle_keys();
+            }
+        }
         VK_M if ctrl && shift && !alt => toggle_zoom(),
         VK_E if ctrl && shift && !alt => toggle_tree(),
         VK_F1 => open_help(),
@@ -4252,7 +4548,7 @@ extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESU
                 ID_ABOUT => about(h),
                 id @ ID_ACCENT..=1405 => set_accent(pal().accents[id - ID_ACCENT].1),
                 ID_ACCENT_PICK => pick_accent(),
-                ID_KEYS => _ = MessageBoxW(Some(h), &HSTRING::from(tr(KEYS_EN, KEYS_KO)), &HSTRING::from(tr("Keyboard shortcuts", "단축키")), MB_OK),
+                ID_KEYS => open_keys(),
                 _ => {}
             },
             WM_INITMENUPOPUP => {
@@ -4466,7 +4762,7 @@ unsafe fn make_menus() -> Result<HMENU> {
     AppendMenuW(view, MF_SEPARATOR, 0, PCWSTR::null())?;
     item(view, MF_STRING, ID_LANG, "한국어 (Korean)")?;
     AppendMenuW(view, MF_SEPARATOR, 0, PCWSTR::null())?;
-    item(view, MF_STRING, ID_KEYS, tr("Keyboard shortcuts...", "단축키..."))?;
+    item(view, MF_STRING, ID_KEYS, tr("Keyboard shortcuts\tCtrl+/", "단축키\tCtrl+/"))?;
     item(view, MF_STRING, ID_HELP, tr("Help (online)\tF1", "도움말 (온라인)\tF1"))?;
     item(view, MF_STRING, ID_ABOUT, tr("About Grids", "Grids 정보"))?;
     Ok(view)
@@ -4532,6 +4828,14 @@ fn main() -> Result<()> {
             hInstance: hinst,
             hCursor: arrow,
             lpszClassName: w!("GridsFav"),
+            ..Default::default()
+        });
+        RegisterClassW(&WNDCLASSW {
+            style: CS_DROPSHADOW,
+            lpfnWndProc: Some(keys_proc),
+            hInstance: hinst,
+            hCursor: arrow,
+            lpszClassName: w!("GridsKeys"),
             ..Default::default()
         });
         RegisterClassW(&WNDCLASSW {
@@ -5108,5 +5412,56 @@ mod tests {
         });
         assert_eq!((s.file_bytes, s.partial, calls.get()), (70_000, true, 10_000));
         _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn shortcut_rows() {
+        let (en, ko) = (key_rows(KEYS_EN), key_rows(KEYS_KO));
+        assert_eq!([en[0].len(), en[1].len()], [ko[0].len(), ko[1].len()]);
+        assert!(en[0].len() >= 10 && en[1].len() >= 5);
+        for r in en.iter().chain(&ko).flatten() {
+            assert!(!r.desc.is_empty() && !r.keys.is_empty() && r.keys.iter().all(|k| !k.is_empty()));
+        }
+        let caps = |k: &str| en[0].iter().find(|r| r.keys.join(", ").starts_with(k)).map(|r| r.keys.len());
+        assert_eq!([caps("Ctrl+L"), caps("F2"), caps("Ctrl+1"), caps("Ctrl+/")], [Some(3), Some(4), Some(1), Some(1)]);
+        assert_eq!(en[0].iter().find(|r| r.keys[0] == "F2").unwrap().keys, ["F2", "Del", "Ctrl+C/X/V", "F5"]);
+        // the last mouse line has no "name: " and continues the one above
+        assert!(en[1].last().unwrap().desc.ends_with("If Grids is already running, they open in that window."));
+        assert!(ko[1].last().unwrap().desc.ends_with("이미 실행 중이면 그 창에서 엽니다."));
+    }
+
+    #[test]
+    fn shortcut_layout() {
+        for dpi in [96, 192] {
+            for dip in [300, 760] {
+                let (cw, lh) = (7 * dpi / 96, 16 * dpi / 96);
+                let measure = |t: &str, max_w: i32, cap: bool| {
+                    let w = t.chars().count() as i32 * cw;
+                    if cap {
+                        (w, lh)
+                    } else {
+                        let lines = t.split('\n').map(|l| ((l.chars().count() as i32 * cw + max_w - 1) / max_w).max(1)).sum::<i32>();
+                        (w.min(max_w), lines * lh)
+                    }
+                };
+                for text in [KEYS_EN, KEYS_KO] {
+                    let g = keys_layout(&key_rows(text), dip * dpi / 96, dpi, &measure);
+                    let (pad, gap) = (KEYS_PAD * dpi / 96, 16 * dpi / 96);
+                    let mut prev = 0;
+                    for r in &g.rows {
+                        assert!(r.row.top >= prev, "rows overlap at {dpi} dpi, {dip} dip");
+                        for k in &r.keys {
+                            // key column: from the padding to a gap before the description
+                            assert!(k.left >= pad && k.right + gap <= r.desc.left && k.bottom <= r.row.bottom);
+                        }
+                        let cap_lines = r.keys.iter().map(|k| k.bottom).max().unwrap() - r.row.top;
+                        assert!(r.row.bottom - r.row.top >= cap_lines.max(r.desc.bottom - r.desc.top));
+                        assert!(r.desc.bottom <= r.row.bottom && r.desc.right <= dip * dpi / 96 - pad);
+                        prev = r.row.bottom;
+                    }
+                    assert!(prev <= g.h && g.titles[1].top > g.titles[0].bottom);
+                }
+            }
+        }
     }
 }

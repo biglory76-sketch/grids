@@ -58,6 +58,7 @@ The exe is not code-signed, so Windows SmartScreen may warn the first time: choo
 | Ctrl+H | Show hidden files |
 | Ctrl+S | Save the current session |
 | Ctrl+B | Favourites list (↑/↓, Enter to open, Del to remove) |
+| Ctrl+/ | Keyboard shortcuts (this list) |
 | Ctrl+Shift+M | Maximize / restore the active pane (or double-click its header) |
 | Ctrl+Shift+E | Hide / show the folder tree (also View menu → Folder tree; its width is kept) |
 | Ctrl+Shift+C | Copy the full path of the selected items (or of the current folder) |
