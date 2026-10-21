@@ -234,17 +234,38 @@ fn main() -> Result<()> {
         }
         apply_theme();
         apply_font();
+        // keep the whole window on the work area, whatever screen it was saved on
+        let mut mi = MONITORINFO { cbSize: size_of::<MONITORINFO>() as u32, ..Default::default() };
         match win {
             Some([l, t, r, b, max]) => {
+                let saved = RECT { left: l, top: t, right: r, bottom: b };
+                let mut fixed = saved;
+                if GetMonitorInfoW(MonitorFromRect(&saved, MONITOR_DEFAULTTONEAREST), &mut mi).as_bool() {
+                    fixed = fit_saved(saved, mi.rcMonitor, mi.rcWork);
+                    // still hidden: move onto the target monitor first, so a DPI change happens here and not after
+                    // the placement below (WM_DPICHANGED would apply Windows' scaled size on top of it)
+                    let (dx, dy) = (mi.rcWork.left - mi.rcMonitor.left, mi.rcWork.top - mi.rcMonitor.top);
+                    let (w, h) = (fixed.right - fixed.left, fixed.bottom - fixed.top);
+                    _ = SetWindowPos(main, None, fixed.left + dx, fixed.top + dy, w, h, SWP_NOZORDER | SWP_NOACTIVATE);
+                }
                 let wp = WINDOWPLACEMENT {
                     length: size_of::<WINDOWPLACEMENT>() as u32,
                     showCmd: if max != 0 { SW_SHOWMAXIMIZED.0 as u32 } else { SW_SHOWNORMAL.0 as u32 },
-                    rcNormalPosition: RECT { left: l, top: t, right: r, bottom: b },
+                    rcNormalPosition: fixed,
                     ..Default::default()
                 };
                 _ = SetWindowPlacement(main, &wp);
             }
-            None => _ = ShowWindow(main, SW_SHOWNORMAL),
+            None => {
+                let mut r = RECT::default();
+                _ = GetWindowRect(main, &mut r);
+                let ok = GetMonitorInfoW(MonitorFromWindow(main, MONITOR_DEFAULTTONEAREST), &mut mi).as_bool();
+                let f = fit(r, mi.rcWork);
+                if ok && f != r {
+                    _ = SetWindowPos(main, None, f.left, f.top, f.right - f.left, f.bottom - f.top, SWP_NOZORDER | SWP_NOACTIVATE);
+                }
+                _ = ShowWindow(main, SW_SHOWNORMAL);
+            }
         }
         relayout();
         focus_view(app(|a| a.s.active));
@@ -950,5 +971,37 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn window_fits_work_area() {
+        let r = |left, top, right, bottom| RECT { left, top, right, bottom };
+        let work = r(0, 0, 1024, 728);
+        let inside = r(100, 50, 900, 650);
+        assert_eq!(fit(inside, work), inside);
+        // the 1400×900 default on a 1024×768 screen
+        assert_eq!(fit(r(26, 26, 1426, 926), work), work);
+        // spilling right and down: same size, slid back in
+        assert_eq!(fit(r(500, 400, 1300, 1000), work), r(224, 128, 1024, 728));
+        // a secondary monitor left of the primary
+        let left_mon = r(-1920, 0, 0, 1040);
+        assert_eq!(fit(r(-2100, -50, -1300, 550), left_mon), r(-1920, 0, -1120, 600));
+        assert_eq!(fit(r(-300, 100, 500, 700), left_mon), r(-800, 100, 0, 700));
+        // taskbar on top or on the left: a saved rect that fits comes back unchanged, so it never creeps
+        let mon = r(0, 0, 1920, 1080);
+        for work in [r(0, 40, 1920, 1080), r(60, 0, 1920, 1080)] {
+            for saved in [r(0, 0, 800, 600), r(100, 100, 900, 700), r(1060, 400, 1860, 1000), r(1120, 440, 1920, 1040)] {
+                if saved.right + work.left <= work.right && saved.bottom + work.top <= work.bottom {
+                    assert_eq!(fit_saved(saved, mon, work), saved);
+                }
+            }
+            // too big or off screen: in screen coordinates the result lies inside rcWork
+            for saved in [r(-300, -200, 3000, 2000), r(1500, 900, 2300, 1500)] {
+                let f = fit_saved(saved, mon, work);
+                let (dx, dy) = (work.left - mon.left, work.top - mon.top);
+                assert_eq!(fit(r(f.left + dx, f.top + dy, f.right + dx, f.bottom + dy), work), r(f.left + dx, f.top + dy, f.right + dx, f.bottom + dy));
+            }
+        }
+        assert_eq!(fit_saved(r(1500, 900, 2300, 1500), mon, r(0, 40, 1920, 1080)), r(1120, 440, 1920, 1040));
     }
 }

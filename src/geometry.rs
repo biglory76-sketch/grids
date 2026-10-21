@@ -25,6 +25,22 @@ pub(crate) fn drag_ratio(r: &mut [f64], k: usize, pos: i32, start: i32, len: i32
     (r[k], r[k + 1]) = (t, pair - t);
 }
 
+/// Shrinks `r` to fit `work` and slides it inside; a rect already inside comes back unchanged.
+pub(crate) fn fit(r: RECT, work: RECT) -> RECT {
+    let w = (r.right - r.left).min(work.right - work.left);
+    let h = (r.bottom - r.top).min(work.bottom - work.top);
+    let left = r.left.clamp(work.left, work.right - w);
+    let top = r.top.clamp(work.top, work.bottom - h);
+    RECT { left, top, right: left + w, bottom: top + h }
+}
+
+/// `fit` for a saved rcNormalPosition, which is in workspace coordinates (origin at rcWork's corner).
+pub(crate) fn fit_saved(saved: RECT, mon: RECT, work: RECT) -> RECT {
+    let (dx, dy) = (work.left - mon.left, work.top - mon.top);
+    let r = fit(RECT { left: saved.left + dx, top: saved.top + dy, right: saved.right + dx, bottom: saved.bottom + dy }, work);
+    RECT { left: r.left - dx, top: r.top - dy, right: r.right - dx, bottom: r.bottom - dy }
+}
+
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub(crate) enum Hit {
     Side,
