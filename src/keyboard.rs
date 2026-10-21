@@ -22,6 +22,11 @@ pub(crate) unsafe fn key(m: &MSG) -> bool {
         }
         return true;
     }
+    // Alt+↑/↓ in the favourites list reorders it, not the pane behind (Up / recent folders)
+    let fav = app(|a| a.fav_popup);
+    if !fav.0.is_null() && m.hwnd == fav && fav_step(VIRTUAL_KEY(m.wParam.0 as u16), ctrl, alt, shift).is_some() {
+        return false;
+    }
     if let Some(i) = pane_of(m.hwnd) {
         set_active(i);
     }

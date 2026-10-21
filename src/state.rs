@@ -48,6 +48,7 @@ pub(crate) struct App {
     pub(crate) fav_closed: Option<Instant>,
     pub(crate) fav_hot: Option<(usize, bool)>, // (row, on its ✕)
     pub(crate) fav_prev: HWND,                 // focus before the popup opened; Esc goes back there
+    pub(crate) fav_press: Option<FavPress>,    // mouse press / drag in the list
     pub(crate) keys_popup: HWND, // keyboard shortcuts window while open
     pub(crate) keys_prev: HWND,  // focus before it opened; Esc / ✕ / Ctrl+/ go back there
     pub(crate) keys_scroll: i32,
@@ -127,6 +128,7 @@ thread_local! {
         fav_closed: None,
         fav_hot: None,
         fav_prev: HWND::default(),
+        fav_press: None,
         keys_popup: HWND::default(),
         keys_prev: HWND::default(),
         keys_scroll: 0,

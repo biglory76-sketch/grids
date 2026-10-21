@@ -65,7 +65,7 @@ The exe is not code-signed, so Windows SmartScreen may warn the first time: choo
 | Ctrl+H | Show hidden files |
 | F3 | Quick preview of the focused file (arrows: previous / next, Esc: close) |
 | Ctrl+S | Save the current session |
-| Ctrl+B | Favourites list (↑/↓, Enter to open, Del to remove) |
+| Ctrl+B | Favourites list (↑/↓, Enter to open, Del to remove, Alt+↑/↓ or drag to reorder) |
 | Ctrl+/ | Keyboard shortcuts (this list) |
 | Ctrl+Shift+M | Maximize / restore the active pane (or double-click its header) |
 | Ctrl+Shift+E | Hide / show the folder tree (also View menu → Folder tree; its width is kept) |

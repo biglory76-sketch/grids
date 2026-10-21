@@ -331,6 +331,46 @@ mod tests {
     use super::*;
 
     #[test]
+    fn fav_reorder() {
+        let v = |s: &[&str]| s.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        // gaps are 0..=n; a row's own two gaps leave it in place
+        let mut f = v(&["a", "b", "c"]);
+        assert_eq!((move_fav(&mut f, 0, 3), f.clone()), (Some(2), v(&["b", "c", "a"])));
+        assert_eq!((move_fav(&mut f, 2, 0), f.clone()), (Some(0), v(&["a", "b", "c"])));
+        for (from, slot) in [(1, 1), (1, 2)] {
+            assert_eq!((move_fav(&mut f, from, slot), f.clone()), (Some(1), v(&["a", "b", "c"])));
+        }
+        assert_eq!((move_fav(&mut f, 3, 0), move_fav(&mut f, 0, 4), move_fav(&mut vec![], 0, 0)), (None, None, None));
+        assert_eq!(f, v(&["a", "b", "c"]));
+
+        // drop gap: rows whose middle is above y
+        let g = fav_geo(3, 96);
+        let r = |k: usize| g.rows[k].0;
+        assert_eq!((fav_slot(&g, r(0).top - 1), fav_slot(&g, r(2).bottom + 5), fav_slot(&fav_geo(0, 96), 50)), (0, 3, 0));
+        for k in 0..3 {
+            assert_eq!((fav_slot(&g, r(k).top + 2), fav_slot(&g, r(k).bottom - 2)), (k, k + 1));
+        }
+
+        // release: outside cancels, a drag drops at the release y, a click must start and end on the same spot
+        let p = |from, on_x, live, slot| Some(FavPress { from, on_x, x0: 0, y0: 0, live, slot });
+        assert_eq!(fav_release(p(0, false, true, Some(2)), false, None, 0), Release::None);
+        let y = r(2).bottom - 2;
+        assert_eq!(fav_release(p(0, false, true, Some(0)), true, fav_hit(&g, 20, y), fav_slot(&g, y)), Release::Move(0, 3));
+        assert_eq!(fav_release(None, true, Some((1, false)), 1), Release::None);
+        assert_eq!(fav_release(p(1, true, false, None), true, Some((1, true)), 1), Release::Remove(1));
+        assert_eq!(fav_release(p(1, false, false, None), true, Some((1, false)), 1), Release::Open(1));
+        assert_eq!(fav_release(p(1, false, false, None), true, Some((2, false)), 2), Release::None);
+        assert_eq!(fav_release(p(1, false, false, None), true, Some((1, true)), 1), Release::None);
+
+        // only plain Alt+↑/↓
+        assert_eq!((fav_step(VK_UP, false, true, false), fav_step(VK_DOWN, false, true, false)), (Some(-1), Some(1)));
+        for (c, a, s) in [(true, true, false), (false, true, true), (true, true, true), (false, false, false)] {
+            assert_eq!((fav_step(VK_UP, c, a, s), fav_step(VK_DOWN, c, a, s)), (None, None));
+        }
+        assert_eq!((fav_step(VK_LEFT, false, true, false), fav_step(VK_F4, false, true, false)), (None, None));
+    }
+
+    #[test]
     fn gather() {
         let s = |v: &[&str]| v.iter().map(|p| p.to_string()).collect::<Vec<_>>();
         let o = |v: &[(usize, &str)]| v.iter().map(|&(i, p)| (i, p.to_string())).collect::<Vec<_>>();
