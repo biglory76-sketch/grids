@@ -32,6 +32,7 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
             WM_ENTERSIZEMOVE => app(|a| a.sizing = true),
             WM_EXITSIZEMOVE => {
                 app(|a| a.sizing = false);
+                refresh_drives(); // one that came or went mid-resize
                 relayout();
                 redraw_all();
             }
@@ -50,6 +51,25 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 });
                 if left > 0 {
                     SetTimer(Some(h), TIMER_REVEAL, if left == 2 { 330 } else { 550 }, None);
+                }
+            }
+            // A drive came or went (any kind). Only queued: no disk calls while the system waits on the reply,
+            // and TRUE grants a removal query.
+            WM_DEVICECHANGE => {
+                _ = PostMessageW(Some(h), WM_DRIVES, WPARAM(0), LPARAM(0));
+                return LRESULT(1);
+            }
+            // network drives and subst send no device message: look again whenever Grids comes to the front
+            WM_ACTIVATEAPP => {
+                if wp.0 != 0 {
+                    _ = PostMessageW(Some(h), WM_DRIVES, WPARAM(0), LPARAM(0));
+                }
+            }
+            // mid-drag or mid-resize, end_drag / WM_EXITSIZEMOVE pick it up instead
+            WM_DRIVES => {
+                if !app(|a| a.drag.is_some() || a.sizing) && refresh_drives() {
+                    relayout();
+                    redraw_all();
                 }
             }
             WM_TIMER if wp.0 == TIMER_STATUS => {
@@ -120,6 +140,14 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                     apply_theme();
                 }
                 id if id == ID_TB_VIEW as usize => popup_menu(app(|a| a.view_menu), ID_TB_VIEW),
+                id if (ID_DRIVE as usize..ID_DRIVE as usize + 26).contains(&id) => {
+                    let i = app(|a| a.s.active);
+                    if navigate(i, &format!("{}:\\", (b'A' + (id - ID_DRIVE as usize) as u8) as char)) {
+                        focus_view(i);
+                    } else {
+                        _ = MessageBeep(MB_ICONWARNING); // no medium, or gone since
+                    }
+                }
                 ID_TREE => toggle_tree(),
                 ID_HIDDEN => toggle_hidden(),
                 ID_EXT => toggle_extensions(),
@@ -354,6 +382,82 @@ pub(crate) fn toolbar_tips() -> [(i32, &'static str, &'static str); 6] {
     ]
 }
 
+// ---------- drive buttons (top toolbar) ----------
+
+pub(crate) fn mask_letters(mask: u32) -> Vec<u8> {
+    (0..26u8).filter(|k| mask >> k & 1 != 0).map(|k| b'A' + k).collect()
+}
+
+// Drive letter of a folder path ("d:\x" -> D); UNC, shell and search locations have none.
+pub(crate) fn drive_of(path: &str) -> Option<u8> {
+    match path.as_bytes() {
+        [c, b':', ..] if c.is_ascii_alphabetic() => Some(c.to_ascii_uppercase()),
+        _ => None,
+    }
+}
+
+// The drive's kind only: reading a volume label can wait on a sleeping disk or a dead share.
+pub(crate) fn drive_tip(c: u8, kind: u32) -> String {
+    let name = match kind {
+        2 => tr("Removable drive", "이동식 드라이브"),
+        3 => tr("Local disk", "로컬 디스크"),
+        4 => tr("Network drive", "네트워크 드라이브"),
+        5 => tr("CD/DVD drive", "CD/DVD 드라이브"),
+        _ => tr("Drive", "드라이브"),
+    };
+    format!("{name} ({}:) — {}", c as char, tr("open in the active pane", "지금 패널에서 열기"))
+}
+
+// Makes / removes the buttons of drive letters that came or went; true if any did. The caller lays them out.
+pub(crate) unsafe fn refresh_drives() -> bool {
+    let mask = GetLogicalDrives();
+    let Some((main, hover, gone, added)) = app(|a| {
+        let old = std::mem::replace(&mut a.drive_mask, mask);
+        if old == mask {
+            return None;
+        }
+        let (keep, gone): (Vec<_>, Vec<_>) = a.drives.drain(..).partition(|d| mask >> (d.0 - b'A') & 1 != 0);
+        a.drives = keep;
+        Some((a.main, a.hover, gone, mask_letters(mask & !old)))
+    }) else {
+        return false;
+    };
+    for (_, _, h) in gone {
+        if hover == h {
+            set_hover(HWND::default());
+        }
+        tip_text(h, "", TTM_DELTOOLW);
+        _ = DestroyWindow(h);
+    }
+    for c in added {
+        let kind = GetDriveTypeW(&HSTRING::from(format!("{}:\\", c as char)));
+        let name = HSTRING::from(format!("{}:", c as char)); // also the accessible name
+        let h = child(main, w!("BUTTON"), PCWSTR(name.as_ptr()), BS_OWNERDRAW as u32, WINDOW_EX_STYLE(0), ID_DRIVE + (c - b'A') as i32, HFONT::default());
+        add_tip(h, &drive_tip(c, kind));
+        app(|a| {
+            a.drives.push((c, kind, h));
+            a.drives.sort_by_key(|d| d.0);
+        });
+    }
+    true
+}
+
+// The underline follows the active pane's drive: on the 300ms status tick, and at once on a pane switch.
+pub(crate) unsafe fn mark_drive() {
+    let Some(hs) = app(|a| {
+        let m = drive_of(&a.s.paths[a.s.active]);
+        (a.drive_mark != m).then(|| {
+            a.drive_mark = m;
+            a.drives.iter().map(|d| d.2).collect::<Vec<_>>()
+        })
+    }) else {
+        return;
+    };
+    for h in hs {
+        _ = InvalidateRect(Some(h), None, false);
+    }
+}
+
 // Switches the UI language now: menu, toolbar tooltips, and the panes (rebuilt with their tooltips).
 pub(crate) unsafe fn set_language(ko: bool) {
     KO.store(ko, Ordering::Relaxed);
@@ -369,6 +473,9 @@ pub(crate) unsafe fn set_language(ko: bool) {
         if let Ok(b) = GetDlgItem(Some(main), id) {
             tip_text(b, hint, TTM_UPDATETIPTEXTW);
         }
+    }
+    for (c, kind, h) in app(|a| a.drives.clone()) {
+        tip_text(h, &drive_tip(c, kind), TTM_UPDATETIPTEXTW);
     }
     refresh_save_button();
     app(|a| a.status_key.clear());

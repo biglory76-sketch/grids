@@ -157,6 +157,13 @@ pub(crate) unsafe fn relayout() {
         }
         let right = g.w - g.pad; // the theme toggle sits at the far right
         moves.push((tb(ID_TB_THEME), RECT { left: right - s(32), top: s(5), right, bottom: s(5) + s(24) }));
+        // drive buttons after them; in a narrow window the last letters hide rather than run into the theme toggle
+        x += s(6);
+        for &(_, _, h) in &a.drives {
+            moves.push((h, RECT { left: x, top: s(5), right: x + s(32), bottom: s(5) + s(24) }));
+            shown.push((h, x + s(32) <= right - s(32) - s(12)));
+            x += s(32) + s(2);
+        }
         let full = RECT { left: g.gx, top: g.top, right: g.w - g.pad, bottom: g.bot };
         for (i, p) in a.panes.iter().enumerate().take(a.s.panes()) {
             if let Some(p) = p {
@@ -222,6 +229,7 @@ pub(crate) unsafe fn end_drag() {
     for b in bars {
         _ = ShowWindow(b, SW_HIDE);
     }
+    refresh_drives(); // one that came or went mid-drag
     relayout();
     redraw_all();
 }
@@ -250,6 +258,7 @@ pub(crate) unsafe fn set_active(i: usize) {
         if let Some(item) = view_of::<IFolderView2>(i).and_then(|fv| fv.GetFolder::<IShellItem>().ok()) {
             sync_tree(&item);
         }
+        mark_drive();
     }
 }
 
@@ -277,6 +286,9 @@ pub(crate) unsafe fn set_accent(c: u32) {
     }
     for p in panes {
         repaint_header(p); // all of them: inactive panes show the accent in their filter badge
+    }
+    for (_, _, h) in app(|a| a.drives.clone()) {
+        _ = InvalidateRect(Some(h), None, false); // the active drive's underline
     }
 }
 

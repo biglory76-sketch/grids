@@ -13,7 +13,7 @@ use windows::core::*;
 use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_CAPTION_COLOR, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DONOTROUND, DWMWINDOWATTRIBUTE};
 use windows::Win32::Graphics::Gdi::*;
-use windows::Win32::Storage::FileSystem::{GetDiskFreeSpaceExW, GetDriveTypeW, FILE_FLAGS_AND_ATTRIBUTES};
+use windows::Win32::Storage::FileSystem::{GetDiskFreeSpaceExW, GetDriveTypeW, GetLogicalDrives, FILE_FLAGS_AND_ATTRIBUTES};
 use windows::Win32::System::Com::*;
 use windows::Win32::System::DataExchange::{CloseClipboard, EmptyClipboard, GetClipboardData, OpenClipboard, RegisterClipboardFormatW, SetClipboardData};
 use windows::Win32::System::Diagnostics::Debug::MessageBeep;
@@ -33,7 +33,7 @@ use windows::Win32::UI::Controls::{
     LVGS_FOCUSED, LVGS_SELECTED, LVGS_SUBSETED, LIST_VIEW_GROUP_STATE_FLAGS, LVM_GETGROUPINFO, LVM_GETGROUPRECT, LVM_GETIMAGELIST, LVSIL_GROUPHEADER,
     HDF_CENTER, HDF_RIGHT, HDF_SORTDOWN, HDF_SORTUP, HDITEMW, HDI_FORMAT, HDI_TEXT, HDM_GETITEMW, HDN_BEGINTRACKW, HDN_ITEMCHANGINGW, HDN_TRACKW, HDI_WIDTH, NMHEADERW, LVCF_MINWIDTH, LVCOLUMNW, LVM_GETCOLUMNW, LVM_SETCOLUMNW,
     LVM_GETCOLUMNWIDTH, LVM_SETCOLUMNWIDTH, NMCUSTOMDRAW, NMHDR, NMLVCUSTOMDRAW, NM_CUSTOMDRAW,
-    TTF_IDISHWND, TTF_SUBCLASS, TTM_ADDTOOLW, TTM_UPDATETIPTEXTW, TTTOOLINFOW, WM_MOUSELEAVE, IImageList, ILD_NORMAL,
+    TTF_IDISHWND, TTF_SUBCLASS, TTM_ADDTOOLW, TTM_DELTOOLW, TTM_UPDATETIPTEXTW, TTTOOLINFOW, WM_MOUSELEAVE, IImageList, ILD_NORMAL,
 };
 use windows::Win32::UI::HiDpi::{GetDpiForWindow, SystemParametersInfoForDpi};
 use windows::Win32::UI::Input::KeyboardAndMouse::*;
@@ -248,6 +248,7 @@ fn main() -> Result<()> {
         }
         apply_theme();
         apply_font();
+        refresh_drives(); // laid out by the relayout below
         // keep the whole window on the work area, whatever screen it was saved on
         let mut mi = MONITORINFO { cbSize: size_of::<MONITORINFO>() as u32, ..Default::default() };
         match win {
@@ -341,6 +342,17 @@ mod tests {
         let gone = [grid[0], grid[2], grid[3]];
         assert_eq!([n(&gone, 0, 0, 1), n(&gone, 3, -1, 0), n(&gone, 2, 0, 1)], [None, None, Some(3)]);
         assert_eq!(n(&grid, 7, 1, 0), None);
+    }
+
+    #[test]
+    fn drives() {
+        assert_eq!(mask_letters(0b1100), b"CD");
+        assert_eq!(mask_letters(1 | 1 << 25), b"AZ");
+        assert!(mask_letters(0).is_empty());
+        assert_eq!([drive_of(r"c:\x"), drive_of(r"D:\"), drive_of("e:")], [Some(b'C'), Some(b'D'), Some(b'E')]);
+        for p in [r"\\server\share", THIS_PC, "search-ms:query=x", ""] {
+            assert_eq!(drive_of(p), None, "{p}");
+        }
     }
 
     #[test]

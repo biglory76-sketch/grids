@@ -17,6 +17,7 @@ pub(crate) const ID_TB_LOAD: i32 = 204;
 pub(crate) const ID_TB_THEME: i32 = 205;
 pub(crate) const ID_TB_FAV: i32 = 206;
 pub(crate) const ID_TB_VIEW: i32 = 203;
+pub(crate) const ID_DRIVE: i32 = 1500; // + 0..25: drive buttons A: … Z:
 // menu ids
 pub(crate) const ID_HIDDEN: usize = 1100;
 pub(crate) const ID_KEYS: usize = 1101;
@@ -194,6 +195,7 @@ Layout button: click for an even grid, press and drag for rows per column (arrow
 ⇄ button: open the selected folder (or the current one) in another pane, with this pane's columns; or copy / move the selected files to another pane's folder (up to 10,000)\n\
 Save (Ctrl+S): overwrite the current session file; green dot = unsaved layout changes (not folder moves)\n\
 Load: pick a saved session by its layout preview\n\
+Drive buttons (C: D: …): open that drive in the active pane; its drive is underlined\n\
 Double-click a splitter: split evenly\n\
 Right-click a pane header: colour label (saved with the session)\n\
 Arguments: grids.exe C:\\a D:\\b ... or grids.exe work.grids\n\
@@ -227,6 +229,7 @@ F2, Del, Ctrl+C/X/V, F5\t탐색기와 동일\n\n\
 ⇄ 버튼: 선택한 폴더(없으면 현재 폴더)를 다른 패널에서 열기, 열 순서·폭·정렬도 함께. 또는 선택한 파일을 다른 패널 폴더로 복사·이동 (최대 10,000개)\n\
 저장 (Ctrl+S): 지금 세션 파일에 바로 덮어쓰기, 초록 점 = 저장 안 된 배치 변경(폴더 이동은 제외)\n\
 불러오기: 저장한 세션을 배치 미리보기로 보고 한 번 클릭\n\
+드라이브 버튼 (C: D: …): 지금 패널에서 그 드라이브 열기, 지금 패널의 드라이브에 밑줄\n\
 스플리터 더블클릭: 균등 분할\n\
 패널 머리줄 오른쪽 클릭: 패널 색 라벨 (세션에 저장)\n\
 실행 인자: grids.exe C:\\a D:\\b ... 또는 grids.exe 작업.grids\n\

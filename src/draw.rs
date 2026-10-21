@@ -113,6 +113,15 @@ pub(crate) unsafe fn draw_button(d: &DRAWITEMSTRUCT) {
         text(dc, icon, glyph(id), icon_font, fg, DT_CENTER);
         return text(dc, RECT { left: icon.right + s(4), ..rc }, &text_of(d.hwndItem), font, pal().text, DT_LEFT);
     }
+    if (ID_DRIVE..ID_DRIVE + 26).contains(&id) {
+        // the active pane's drive: full-strength letter over a selection colour underline
+        let (mark, accent) = app(|a| (a.drive_mark, a.s.accent_now()));
+        let marked = mark == Some(b'A' + (id - ID_DRIVE) as u8);
+        if marked {
+            fill(dc, RECT { left: rc.left + s(7), top: rc.bottom - s(2), right: rc.right - s(7), bottom: rc.bottom }, accent);
+        }
+        return text(dc, rc, &text_of(d.hwndItem), font, if marked { pal().text } else { fg }, DT_CENTER);
+    }
     // icon only, names live in the tooltips; save turns green with a dot while the layout differs
     if id == ID_TB_FAV {
         return draw_star(dc, rc, fg, Star::Outline, dpi);

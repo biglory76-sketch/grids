@@ -22,6 +22,7 @@ Every pane is a real Windows Explorer view, so right-click menus, drag and drop,
 - **Missing folders**: a local folder from a session, favourite, recent list or the command line that was deleted or renamed opens its nearest existing parent instead, and the status line says which folder was missing (8 s); it also leaves the recent list.
 - **Columns are a pane setting**: their order, widths and sort stay as the pane moves from folder to folder, and any column can be made narrower than Explorer allows (Size stops at 90 px there).
 - **Folder favourites**: star a folder from its pane header, jump to it from the star list in the toolbar.
+- **Drive buttons**: C: D: E: … in the top toolbar open that drive in the active pane; the active pane's drive is underlined in the selection colour, and buttons come and go as drives are plugged in or removed.
 - **Folder sizes**: the status line also shows the total size of selected folders, summed in the background (F5 sums again; "partial" when some items couldn't be read).
 - **View menu**: show hidden files and file name extensions — the same switches as Explorer's View > Show.
 - **Light and dark themes** with six selection colours each; the active pane is outlined and its header tinted.
