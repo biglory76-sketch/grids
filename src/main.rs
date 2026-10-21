@@ -211,6 +211,7 @@ Enter / Esc\tApply / cancel the address or filter\n\
 Ctrl+H\tShow hidden files\n\
 F1\tHelp (opens the README on GitHub)\n\
 F2, Del, Ctrl+C/X/V, F5\tSame as Explorer\n\n\
+Address bar: click a folder in the path to go there; click the current folder or empty space, or press Ctrl+L, to type a path\n\
 Layout button: click for an even grid, press and drag for rows per column (arrow keys + Enter work too)\n\
 ⇄ button: open the selected folder (or the current one) in another pane, with this pane's columns; or copy / move the selected files to another pane's folder (up to 10,000)\n\
 Save (Ctrl+S): overwrite the current session file; green dot = unsaved layout changes (not folder moves)\n\
@@ -237,6 +238,7 @@ Enter / Esc\t주소창·필터 적용 / 취소\n\
 Ctrl+H\t숨김 파일 표시\n\
 F1\t도움말 (GitHub README 열기)\n\
 F2, Del, Ctrl+C/X/V, F5\t탐색기와 동일\n\n\
+주소 칸: 경로의 폴더를 누르면 그리로 이동, 현재 폴더·빈 곳을 누르거나 Ctrl+L이면 경로 입력\n\
 레이아웃 버튼: 클릭 = 균등 배치, 누른 채 끌기 = 열마다 칸 수 (방향키+Enter도 가능)\n\
 ⇄ 버튼: 선택한 폴더(없으면 현재 폴더)를 다른 패널에서 열기, 열 순서·폭·정렬도 함께. 또는 선택한 파일을 다른 패널 폴더로 복사·이동 (최대 10,000개)\n\
 저장 (Ctrl+S): 지금 세션 파일에 바로 덮어쓰기, 초록 점 = 저장 안 된 배치 변경(폴더 이동은 제외)\n\
@@ -460,6 +462,51 @@ fn layout_differs(cur: &Session, base: &Session) -> bool {
 // Drives, folders and shares; not shell places like This PC or the Recycle Bin, whose columns are their own.
 fn is_fs(path: &str) -> bool {
     path.get(1..3) == Some(":\\") || path.starts_with(r"\\")
+}
+
+// Address bar crumbs of a parsing name: (shown name, folder to go to), drive or \\server\share first.
+// Shell places (This PC ...) have none.
+fn crumbs(parse: &str) -> Vec<(String, String)> {
+    if !is_fs(parse) {
+        return Vec::new();
+    }
+    let (root, go, rest) = match parse.strip_prefix(r"\\") {
+        Some(unc) => {
+            let mut it = unc.splitn(3, '\\');
+            let root = format!(r"\\{}", it.by_ref().take(2).filter(|p| !p.is_empty()).collect::<Vec<_>>().join("\\"));
+            (root.clone(), root, it.next().unwrap_or(""))
+        }
+        None => (parse[..2].to_string(), parse[..3].to_string(), &parse[3..]),
+    };
+    let mut path = root.clone();
+    let mut out = vec![(root, go)];
+    for part in rest.split('\\').filter(|p| !p.is_empty()) {
+        path = format!(r"{path}\{part}");
+        out.push((part.to_string(), path.clone()));
+    }
+    out
+}
+
+// Crumb widths `w` into `avail` px: (first crumb shown, '…' shown, width of the last).
+// All of it when it fits; else the current folder (cut to fit), then parents nearest first, keeping room for '…'.
+fn crumb_fit(w: &[i32], avail: i32, sep: i32, ell: i32, min: i32) -> (usize, bool, i32) {
+    let n = w.len();
+    if n == 0 || avail < min {
+        return (n, false, 0);
+    }
+    if w.iter().sum::<i32>() + sep * (n as i32 - 1) <= avail {
+        return (0, false, w[n - 1]);
+    }
+    let last = w[n - 1].min(avail);
+    let (mut first, mut used) = (n - 1, last);
+    for k in (0..n - 1).rev() {
+        if used + w[k] + sep + if k > 0 { ell + sep } else { 0 } > avail {
+            break;
+        }
+        used += w[k] + sep;
+        first = k;
+    }
+    (first, first > 0 && used + ell + sep <= avail, last)
 }
 
 const RECENT: usize = 20;
@@ -776,6 +823,7 @@ struct App {
     note: Option<(String, Instant)>, // status line confirmation and when it was set (runtime only)
     drop_hover: HWND,                         // pane whose top bar something openable is being dragged over
     drop_open: Option<(HWND, usize, IShellItem)>, // folder dropped on a top bar, opened by WM_DROP_OPEN
+    crumb_hot: Option<(HWND, usize)>,             // address bar crumb under the mouse (pane, crumb_layout index)
 }
 
 thread_local! {
@@ -823,6 +871,7 @@ thread_local! {
         note: None,
         drop_hover: HWND::default(),
         drop_open: None,
+        crumb_hot: None,
     });
 }
 
@@ -1301,6 +1350,7 @@ unsafe fn focus_view(i: usize) {
 
 unsafe fn focus_ctl(i: usize, id: i32) -> bool {
     if let Some(e) = pane_ctl(i, id) {
+        _ = ShowWindow(e, SW_SHOWNA); // an idle address edit hides behind its crumbs
         _ = SetFocus(Some(e));
         SendMessageW(e, EM_SETSEL, Some(WPARAM(0)), Some(LPARAM(-1)));
     }
@@ -1751,6 +1801,7 @@ unsafe fn on_nav(i: usize, pidl: *const ITEMIDLIST) {
     };
     if let Ok(e) = GetDlgItem(Some(h), ID_EDIT) {
         _ = SetWindowTextW(e, &HSTRING::from(disp.as_str()));
+        sync_addr(h);
         show_path_end(e, &disp);
     }
     if let Ok(b) = GetDlgItem(Some(h), ID_FAV) {
@@ -2182,6 +2233,7 @@ unsafe fn layout_pane(h: HWND) {
     moves.push((ctl(ID_FAV), pg.fav));
     move_all(&moves, Some((&eb, pg.view)));
     show_path_end(ctl(ID_EDIT), &disp);
+    sync_addr(h);
 }
 
 unsafe fn relayout() {
@@ -3221,14 +3273,157 @@ unsafe fn paint_main(h: HWND) {
     });
 }
 
+#[derive(Clone, PartialEq)]
+enum Crumb {
+    Sep,
+    Here,
+    Go(String),
+    More(Vec<(String, String)>), // folded parents, nearest first
+}
+
+// Where crumbs go in the address pill: the edit's horizontal span, a little inside the pill vertically.
+fn crumb_field(addr: RECT, dpi: i32) -> RECT {
+    let s = |v: i32| v * dpi / 96;
+    let left = addr.left + s(8);
+    RECT { left, top: addr.top + s(3), right: (addr.right - s(6)).max(left), bottom: addr.bottom - s(3) }
+}
+
+// Pane i's crumbs laid out in `field`: (rect, label, target). Painting and mouse hits both go through here.
+unsafe fn crumb_layout(dc: HDC, font: HFONT, i: usize, field: RECT) -> Vec<(RECT, String, Crumb)> {
+    let Some((parse, disp, dpi)) = app(|a| Some((a.s.paths[i].clone(), a.panes[i].as_ref()?.disp.clone(), a.dpi))) else {
+        return Vec::new();
+    };
+    let s = |v: i32| v * dpi / 96;
+    let mut items = crumbs(&parse);
+    if items.is_empty() {
+        items.push((disp, String::new())); // a shell place: its name, to click into the edit
+    }
+    let old = SelectObject(dc, font.into());
+    let width = |t: &str| {
+        let w: Vec<u16> = t.encode_utf16().collect();
+        let mut sz = SIZE::default();
+        _ = GetTextExtentPoint32W(dc, &w, &mut sz);
+        sz.cx
+    };
+    let w: Vec<i32> = items.iter().map(|(n, _)| width(n) + 2 * s(4)).collect();
+    let (sep, ell) = (width("›") + 2 * s(2), width("…") + 2 * s(4));
+    SelectObject(dc, old);
+    let (first, more, last) = crumb_fit(&w, field.right - field.left, sep, ell, s(16));
+    let mut out = Vec::new();
+    let mut x = field.left;
+    let mut put = |wd: i32, label: &str, c: Crumb| {
+        out.push((RECT { left: x, right: x + wd, ..field }, label.to_string(), c));
+        x += wd;
+    };
+    if more {
+        put(ell, "…", Crumb::More(items[..first].iter().rev().cloned().collect()));
+        put(sep, "›", Crumb::Sep);
+    }
+    for k in first..items.len() {
+        if k + 1 == items.len() {
+            put(last, &items[k].0, Crumb::Here);
+        } else {
+            put(w[k], &items[k].0, Crumb::Go(items[k].1.clone()));
+            put(sep, "›", Crumb::Sep);
+        }
+    }
+    out.retain_mut(|(r, ..)| {
+        (r.left, r.right) = (r.left.max(field.left), r.right.min(field.right));
+        r.right > r.left
+    });
+    out
+}
+
+fn addr_rect(h: HWND, dpi: i32) -> RECT {
+    let mut rc = RECT::default();
+    _ = unsafe { GetClientRect(h, &mut rc) };
+    pane_geo(rc.right, rc.bottom, dpi).addr
+}
+
+// The crumb under a pane-client point: None off the crumbs (edit showing, or outside the address pill),
+// Some(None) on the pill's empty space.
+unsafe fn crumb_at(h: HWND, i: usize, x: i32, y: i32) -> Option<Option<(usize, RECT, Crumb)>> {
+    if GetDlgItem(Some(h), ID_EDIT).is_ok_and(|e| IsWindowVisible(e).as_bool()) {
+        return None;
+    }
+    let (dpi, font) = app(|a| (a.dpi, a.font));
+    let inr = |r: &RECT| x >= r.left && x < r.right && y >= r.top && y < r.bottom;
+    let addr = addr_rect(h, dpi);
+    if !inr(&addr) {
+        return None;
+    }
+    let dc = GetDC(Some(h));
+    let items = crumb_layout(dc, font, i, crumb_field(addr, dpi));
+    ReleaseDC(Some(h), dc);
+    Some(items.into_iter().enumerate().find(|(_, (r, _, c))| *c != Crumb::Sep && inr(r)).map(|(k, (r, _, c))| (k, r, c)))
+}
+
+// The address edit shows only while in use (focused, or holding an edit); otherwise the pill draws crumbs.
+unsafe fn sync_addr(h: HWND) {
+    let Ok(e) = GetDlgItem(Some(h), ID_EDIT) else { return };
+    let disp = app(|a| {
+        if a.crumb_hot.is_some_and(|(w, _)| w == h) {
+            a.crumb_hot = None; // the crumbs change under it
+        }
+        a.panes.iter().flatten().find(|p| p.hwnd == h).map(|p| p.disp.clone())
+    });
+    let show = GetFocus() == e || text_of(e) != disp.unwrap_or_default();
+    _ = ShowWindow(e, if show { SW_SHOWNA } else { SW_HIDE });
+    _ = InvalidateRect(Some(h), None, false);
+}
+
+// Click on the address pill: a parent crumb goes there, '…' lists the folded parents, the rest starts typing.
+unsafe fn crumb_click(h: HWND, i: usize, x: i32, y: i32) {
+    let target = match crumb_at(h, i, x, y) {
+        None => return,
+        Some(Some((_, _, Crumb::Go(p)))) => Some(p),
+        Some(Some((_, r, Crumb::More(list)))) => {
+            let Ok(menu) = CreatePopupMenu() else { return };
+            for (k, (n, _)) in list.iter().enumerate() {
+                _ = AppendMenuW(menu, MF_STRING, k + 1, &HSTRING::from(n.replace('&', "&&")));
+            }
+            let mut p = POINT { x: r.left, y: r.bottom };
+            _ = ClientToScreen(h, &mut p);
+            let pick = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_LEFTALIGN | TPM_TOPALIGN, p.x, p.y, None, h, None).0;
+            _ = DestroyMenu(menu);
+            (pick > 0).then(|| list[pick as usize - 1].1.clone())
+        }
+        Some(_) => {
+            focus_ctl(i, ID_EDIT);
+            return;
+        }
+    };
+    if target.is_some_and(|p| !navigate(i, &p)) {
+        _ = MessageBeep(MB_ICONWARNING); // gone or unreachable
+    }
+    focus_view(i);
+}
+
+unsafe fn crumb_hover(h: HWND, k: Option<usize>) {
+    let hot = k.map(|k| (h, k));
+    let (old, dpi) = app(|a| (std::mem::replace(&mut a.crumb_hot, hot), a.dpi));
+    if old == hot {
+        return;
+    }
+    for w in [old.map(|o| o.0), hot.map(|o| o.0)].into_iter().flatten() {
+        _ = InvalidateRect(Some(w), Some(&addr_rect(w, dpi)), false);
+    }
+    if hot.is_some() && old.is_none_or(|(w, _)| w != h) {
+        let mut t = TRACKMOUSEEVENT { cbSize: size_of::<TRACKMOUSEEVENT>() as u32, dwFlags: TME_LEAVE, hwndTrack: h, dwHoverTime: 0 };
+        _ = TrackMouseEvent(&mut t);
+    }
+}
+
 // One white plate per pane: a single accent border when active, flat fields in the top bar.
 unsafe fn paint_pane(h: HWND) {
-    let (active, i, dpi, icon_font, small_font, accent) = app(|a| {
+    let (active, i, dpi, icon_font, small_font, font, accent, hot) = app(|a| {
         let i = a.panes.iter().position(|p| p.as_ref().is_some_and(|p| p.hwnd == h));
         // a drop target-to-be looks active too
         let active = a.panes[a.s.active].as_ref().is_some_and(|p| p.hwnd == h) || a.drop_hover == h;
-        (active, i, a.dpi, a.icon_font, a.small_font, a.s.accent_now())
+        let hot = a.crumb_hot.filter(|(w, _)| *w == h).map(|(_, k)| k);
+        (active, i, a.dpi, a.icon_font, a.small_font, a.font, a.s.accent_now(), hot)
     });
+    let crumbs_on = GetDlgItem(Some(h), ID_EDIT).is_ok_and(|e| !IsWindowVisible(e).as_bool());
     let filtered = i.is_some_and(|i| FILTERS.lock().is_ok_and(|f| !f[i].is_empty()));
     let (head, ink) = header_colors(h);
     let focus = GetFocus();
@@ -3253,6 +3448,20 @@ unsafe fn paint_pane(h: HWND) {
             fill(dc, p, pal().pill);
             if on {
                 frame(dc, p, 1, if active { ink } else { accent });
+            }
+        }
+        // idle address bar: C: › Users › Public, parents dimmed, the crumb under the mouse shaded
+        if let Some(i) = i.filter(|_| crumbs_on) {
+            for (k, (r, label, c)) in crumb_layout(dc, font, i, crumb_field(pg.addr, dpi)).into_iter().enumerate() {
+                if c == Crumb::Sep {
+                    text(dc, r, &label, font, pal().sub, DT_CENTER);
+                    continue;
+                }
+                if hot == Some(k) {
+                    fill(dc, r, blend(pal().pill, pal().text, 0.08));
+                }
+                let ink = if c == Crumb::Here { pal().text } else { pal().sub };
+                text(dc, RECT { left: r.left + s(4), right: r.right - s(4), ..r }, &label, font, ink, DT_LEFT);
             }
         }
         if filtered {
@@ -4613,9 +4822,28 @@ extern "system" fn pane_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESU
             WM_TIMER if wp.0 == TIMER_SETTLE => settle_cols(h),
             WM_SIZE => layout_pane(h),
             WM_LBUTTONDBLCLK => {
-                if let Some(i) = pane_of(h) {
+                let (x, y) = ((lp.0 & 0xffff) as i16 as i32, (lp.0 >> 16 & 0xffff) as i16 as i32);
+                let addr = addr_rect(h, app(|a| a.dpi));
+                let on_addr = x >= addr.left && x < addr.right && y >= addr.top && y < addr.bottom;
+                if let Some(i) = pane_of(h).filter(|_| !on_addr) {
                     set_active(i);
                     toggle_zoom();
+                }
+            }
+            // address bar crumbs (set_active already ran in pre_translate)
+            WM_LBUTTONDOWN => {
+                if let Some(i) = pane_of(h) {
+                    crumb_click(h, i, (lp.0 & 0xffff) as i16 as i32, (lp.0 >> 16 & 0xffff) as i16 as i32);
+                }
+            }
+            WM_MOUSEMOVE => {
+                let (x, y) = ((lp.0 & 0xffff) as i16 as i32, (lp.0 >> 16 & 0xffff) as i16 as i32);
+                let k = pane_of(h).and_then(|i| crumb_at(h, i, x, y)).flatten().map(|(k, ..)| k);
+                crumb_hover(h, k);
+            }
+            WM_MOUSELEAVE => {
+                if app(|a| a.crumb_hot.is_some_and(|(w, _)| w == h)) {
+                    crumb_hover(h, None);
                 }
             }
             WM_PAINT => paint_pane(h),
@@ -4650,7 +4878,8 @@ extern "system" fn pane_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESU
             }
             WM_COMMAND => match ((wp.0 & 0xffff) as i32, ((wp.0 >> 16) & 0xffff) as u32) {
                 // pill gets an accent outline while its edit has focus
-                (ID_EDIT | ID_FILTER, EN_SETFOCUS | EN_KILLFOCUS) => _ = InvalidateRect(Some(h), None, false),
+                (ID_EDIT, EN_SETFOCUS | EN_KILLFOCUS) => sync_addr(h),
+                (ID_FILTER, EN_SETFOCUS | EN_KILLFOCUS) => _ = InvalidateRect(Some(h), None, false),
                 (ID_BACK, _) => nav(SBSP_NAVIGATEBACK),
                 (ID_FWD, _) => nav(SBSP_NAVIGATEFORWARD),
                 (ID_UP, _) => nav(SBSP_PARENT),
@@ -4970,6 +5199,31 @@ mod tests {
         let gone = [grid[0], grid[2], grid[3]];
         assert_eq!([n(&gone, 0, 0, 1), n(&gone, 3, -1, 0), n(&gone, 2, 0, 1)], [None, None, Some(3)]);
         assert_eq!(n(&grid, 7, 1, 0), None);
+    }
+
+    #[test]
+    fn address_crumbs() {
+        let c = |p: &str| crumbs(p).into_iter().map(|(n, g)| format!("{n}={g}")).collect::<Vec<_>>();
+        assert_eq!(c("C:\\"), [r"C:=C:\"]);
+        assert_eq!(c(r"C:\Users\Public\"), [r"C:=C:\", r"Users=C:\Users", r"Public=C:\Users\Public"]);
+        assert_eq!(c(r"\\srv\share\a"), [r"\\srv\share=\\srv\share", r"a=\\srv\share\a"]);
+        assert!(crumbs(THIS_PC).is_empty());
+        let p = r"D:\x\y y\z";
+        assert!(crumbs(p).iter().all(|(_, g)| p.starts_with(g.as_str())));
+    }
+
+    #[test]
+    fn crumb_fits() {
+        let f = |w: &[i32], avail| crumb_fit(w, avail, 4, 20, 16);
+        assert_eq!(f(&[30, 40, 50], 500), (0, false, 50));
+        assert_eq!(f(&[14, 15, 15], 52), (0, false, 15)); // exactly fits: nothing folded
+        assert_eq!(f(&[14, 15, 15], 51), (2, true, 15));
+        assert_eq!(f(&[10, 200], 100), (1, false, 100)); // current folder longer than the field
+        assert_eq!(f(&[30, 10, 50], 70), (2, false, 50)); // no room left for '…'
+        assert_eq!(f(&[30, 10, 50], 78), (2, true, 50));
+        assert_eq!(f(&[30, 40], 15), (2, false, 0));
+        assert_eq!(f(&[30, 40], 0), (2, false, 0));
+        assert_eq!(f(&[], 100), (0, false, 0));
     }
 
     #[test]
