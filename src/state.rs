@@ -74,6 +74,7 @@ pub(crate) struct App {
     pub(crate) drives: Vec<(u8, u32, HWND)>, // top toolbar drive buttons, A→Z: letter, drive type, button
     pub(crate) drive_mask: u32,              // GetLogicalDrives() they were made for
     pub(crate) drive_mark: Option<u8>,       // the active pane's drive (underlined)
+    pub(crate) hot_on: bool,                 // Win+Alt+E actually registered (s.hotkey is only the wish)
 }
 
 // The Num+ / Num− box: popup, its edit, the pane it acts on, that pane's folder when it opened, deselect mode.
@@ -145,6 +146,7 @@ thread_local! {
         drives: Vec::new(),
         drive_mask: 0,
         drive_mark: None,
+        hot_on: false,
     });
 }
 

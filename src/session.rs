@@ -17,6 +17,7 @@ pub(crate) struct Session {
     pub(crate) dark: bool,
     pub(crate) dblup: bool,            // double-click on empty space goes to the parent folder
     pub(crate) tree: bool,             // folder tree shown (side keeps its width while hidden)
+    pub(crate) hotkey: bool,           // Win+Alt+E brings Grids to the front, app-wide (not part of a layout)
     pub(crate) file: String,          // named session (.grids) the layout was last loaded from / saved to
     pub(crate) favs: Vec<String>,      // favourite folders (parsing names), app-wide
     pub(crate) recent: Vec<String>,    // recently visited folders from every pane, newest first, app-wide
@@ -41,6 +42,7 @@ impl Default for Session {
             dark: false,
             dblup: true,
             tree: true,
+            hotkey: true,
             file: String::new(),
             favs: Vec::new(),
             recent: Vec::new(),
@@ -130,6 +132,7 @@ impl Session {
                 "dark" => s.dark = v.trim() == "1",
                 "dblup" => s.dblup = v.trim() != "0",
                 "tree" => s.tree = v.trim() != "0",
+                "hotkey" => s.hotkey = v.trim() != "0",
                 "lang" => s.ko = v.trim() == "ko",
                 "session" => s.file = v.trim().to_string(),
                 "fav" if !v.trim().is_empty() => s.favs.push(v.trim().to_string()),
@@ -166,7 +169,8 @@ impl Session {
         o += &format!("side={}\ncols={}\n", self.side, join(&self.heights));
         o += &format!("colr={}\nrowr={rowr}\nactive={}\n", join(&self.colr), self.active);
         o += &format!("accent={:06X}\naccent_dark={:06X}\ndark={}\n", self.accent, self.accent_dark, self.dark as u8);
-        o += &format!("dblup={}\ntree={}\nlang={}\n", self.dblup as u8, self.tree as u8, if self.ko { "ko" } else { "en" });
+        o += &format!("dblup={}\ntree={}\nhotkey={}\n", self.dblup as u8, self.tree as u8, self.hotkey as u8);
+        o += &format!("lang={}\n", if self.ko { "ko" } else { "en" });
         if !self.file.is_empty() {
             o += &format!("session={}\n", self.file);
         }

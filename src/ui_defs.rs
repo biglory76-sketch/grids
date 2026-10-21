@@ -27,6 +27,7 @@ pub(crate) const ID_HELP: usize = 1105;
 pub(crate) const ID_ABOUT: usize = 1106;
 pub(crate) const ID_TREE: usize = 1107;
 pub(crate) const ID_EXT: usize = 1108;
+pub(crate) const ID_HOTKEY: usize = 1109;
 pub(crate) const HOME: &str = "https://github.com/efww/grids";
 pub(crate) const ID_ACCENT: usize = 1400; // + preset index
 pub(crate) const ID_ACCENT_PICK: usize = 1410;
@@ -189,6 +190,7 @@ Enter / Esc\tApply / cancel the address or filter\n\
 Ctrl+H\tShow hidden files\n\
 F3\tQuick preview of the focused file (arrows: previous / next, Esc: close)\n\
 F1\tHelp (opens the README on GitHub)\n\
+Win+Alt+E\tBring Grids to front from any app (again: minimize)\n\
 F2, Del, Ctrl+C/X/V, F5\tSame as Explorer\n\n\
 Address bar: click a folder in the path to go there; click the current folder or empty space, or press Ctrl+L, to type a path\n\
 Layout button: click for an even grid, press and drag for rows per column (arrow keys + Enter work too)\n\
@@ -223,6 +225,7 @@ Enter / Esc\t주소창·필터 적용 / 취소\n\
 Ctrl+H\t숨김 파일 표시\n\
 F3\t포커스한 파일 빠른 미리보기 (방향키: 이전·다음, Esc: 닫기)\n\
 F1\t도움말 (GitHub README 열기)\n\
+Win+Alt+E\t어디서나 Grids 앞으로 (다시 누르면 최소화)\n\
 F2, Del, Ctrl+C/X/V, F5\t탐색기와 동일\n\n\
 주소 칸: 경로의 폴더를 누르면 그리로 이동, 현재 폴더·빈 곳을 누르거나 Ctrl+L이면 경로 입력\n\
 레이아웃 버튼: 클릭 = 균등 배치, 누른 채 끌기 = 열마다 칸 수 (방향키+Enter도 가능)\n\

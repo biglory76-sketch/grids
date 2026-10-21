@@ -289,6 +289,11 @@ fn main() -> Result<()> {
         app(|a| a.base = Some(base.unwrap_or_else(|| a.s.clone())));
         refresh_save_button();
         SetTimer(Some(main), TIMER_STATUS, 300, None);
+        // taken by another app: the menu shows it off, s.hotkey stays on so the next start tries again
+        if app(|a| a.s.hotkey) {
+            let on = set_hotkey(main, true);
+            app(|a| a.hot_on = on);
+        }
 
         let mut msg = MSG::default();
         while GetMessageW(&mut msg, None, 0, 0).as_bool() {
@@ -400,6 +405,27 @@ mod tests {
         // grid starting at pad: the old sidebar splitter is no longer a splitter
         let g = Geo { w: 1000, h: 600, top: 34, bot: 576, pad: 8, gap: 8, side: 240, tree: false, gx: 8, xs: vec![(8, 992)], ys: vec![vec![(34, 576)]], zoom: false };
         assert!((240..264).all(|x| !matches!(hit(&g, x, 100), Some(Hit::Side))));
+    }
+
+    #[test]
+    fn hotkey_setting() {
+        assert!(Session::parse("side=300\ndblup=1\n").hotkey); // older ini: on
+        assert!(!Session::parse("hotkey=0\n").hotkey);
+        for on in [true, false] {
+            assert_eq!(Session::parse(&Session { hotkey: on, ..Session::default() }.to_ini()).hotkey, on);
+        }
+        assert!(hotkey_flip(false, |w| w)); // failed at start, the menu click retries and succeeds
+        assert!(!hotkey_flip(false, |_| false)); // retry fails again
+        assert!(!hotkey_flip(true, |w| {
+            assert!(!w);
+            false
+        })); // turned off
+        // app-wide: no unsaved-layout dot, a loaded session doesn't change it
+        let base = Session::default();
+        assert!(!layout_differs(&Session { hotkey: false, ..base.clone() }, &base));
+        let mut cur = Session::default();
+        cur.take_layout(&Session::parse("hotkey=0\n"));
+        assert!(cur.hotkey);
     }
 
     #[test]

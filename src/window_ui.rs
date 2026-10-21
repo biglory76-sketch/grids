@@ -152,6 +152,18 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 ID_HIDDEN => toggle_hidden(),
                 ID_EXT => toggle_extensions(),
                 ID_DBLUP => app(|a| a.s.dblup ^= true),
+                // flips what is really registered, so after a failed start one click retries
+                ID_HOTKEY => {
+                    let was = app(|a| a.hot_on);
+                    let now = hotkey_flip(was, |on| set_hotkey(h, on));
+                    app(|a| {
+                        (a.hot_on, a.s.hotkey) = (now, now);
+                        if !was && !now {
+                            let text = tr("Win+Alt+E is already used by another app", "Win+Alt+E는 다른 앱이 이미 쓰고 있음");
+                            a.note = Some((text.into(), Instant::now() + Duration::from_secs(3)));
+                        }
+                    });
+                }
                 ID_LANG => set_language(!KO.load(Ordering::Relaxed)),
                 ID_HELP => open_help(),
                 ID_ABOUT => about(h),
@@ -161,12 +173,13 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 _ => {}
             },
             WM_INITMENUPOPUP => {
-                let (menu, dblup, tree, accent) = app(|a| (a.view_menu, a.s.dblup, a.s.tree, a.s.accent_now()));
+                let (menu, dblup, tree, accent, hot) = app(|a| (a.view_menu, a.s.dblup, a.s.tree, a.s.accent_now(), a.hot_on));
                 let check = |id: usize, on: bool| CheckMenuItem(menu, id as u32, (MF_BYCOMMAND | if on { MF_CHECKED } else { MF_UNCHECKED }).0);
                 check(ID_TREE, tree);
                 check(ID_HIDDEN, hidden());
                 check(ID_EXT, extensions());
                 check(ID_DBLUP, dblup);
+                check(ID_HOTKEY, hot);
                 check(ID_LANG, KO.load(Ordering::Relaxed));
                 for (k, (_, c)) in pal().accents.iter().enumerate() {
                     check(ID_ACCENT + k, *c == accent);
@@ -198,8 +211,12 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
             }
             // Windows restart / sign-out: no WM_CLOSE comes. WM_QUERYENDSESSION stays with DefWindowProcW (never blocks).
             WM_ENDSESSION if wp.0 != 0 => save_session(),
+            WM_HOTKEY if wp.0 == HOTKEY_ID as usize => hotkey_pressed(h),
             WM_DESTROY => {
                 _ = KillTimer(Some(h), TIMER_STATUS);
+                if app(|a| a.hot_on) {
+                    set_hotkey(h, false);
+                }
                 for i in 0..MAXP {
                     destroy_pane(i);
                 }
@@ -351,6 +368,49 @@ pub(crate) extern "system" fn pane_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
     }
 }
 
+// ---------- Win+Alt+E: Grids to the front from any app ----------
+
+pub(crate) const HOTKEY_ID: i32 = 1;
+
+// The new real state after a menu click: reg(wanted) registers / unregisters and says whether it is on now.
+pub(crate) fn hotkey_flip(on: bool, reg: impl FnOnce(bool) -> bool) -> bool {
+    reg(!on)
+}
+
+pub(crate) unsafe fn set_hotkey(main: HWND, on: bool) -> bool {
+    if on {
+        RegisterHotKey(Some(main), HOTKEY_ID, MOD_WIN | MOD_ALT | MOD_NOREPEAT, 'E' as u32).is_ok()
+    } else {
+        _ = UnregisterHotKey(Some(main), HOTKEY_ID);
+        false
+    }
+}
+
+// Front with the list ready for the keyboard; pressed while Grids is already in front: minimize.
+// A modal dialog owned by main (save, colour, About) has disabled it: bring that forward, never minimize.
+pub(crate) unsafe fn hotkey_pressed(main: HWND) {
+    let iconic = IsIconic(main).as_bool();
+    if !IsWindowEnabled(main).as_bool() {
+        if iconic {
+            _ = ShowWindow(main, SW_RESTORE);
+        }
+        let p = GetLastActivePopup(main);
+        if p != main {
+            _ = SetForegroundWindow(p);
+        }
+    } else if GetAncestor(GetForegroundWindow(), GA_ROOTOWNER) == main && !iconic {
+        _ = ShowWindow(main, SW_MINIMIZE);
+    } else {
+        if iconic {
+            _ = ShowWindow(main, SW_RESTORE);
+        }
+        // refused (the taskbar button flashes instead): leave focus where it is
+        if SetForegroundWindow(main).as_bool() && GetForegroundWindow() == main {
+            focus_view(app(|a| a.s.active));
+        }
+    }
+}
+
 // The README on GitHub, in the UI language.
 pub(crate) unsafe fn open_help() {
     let url = format!("{HOME}/blob/main/{}", tr("README.md", "README.ko.md"));
@@ -490,6 +550,7 @@ pub(crate) unsafe fn make_menus() -> Result<HMENU> {
     item(view, MF_STRING, ID_HIDDEN, tr("Show hidden files\tCtrl+H", "숨김 파일 표시\tCtrl+H"))?;
     item(view, MF_STRING, ID_EXT, tr("Show file name extensions", "파일 확장명 표시"))?;
     item(view, MF_STRING, ID_DBLUP, tr("Double-click empty space: parent folder", "빈 곳 더블클릭: 위 폴더로"))?;
+    item(view, MF_STRING, ID_HOTKEY, tr("Bring Grids to front from anywhere\tWin+Alt+E", "어디서나 Grids 불러오기\tWin+Alt+E"))?;
     let colors = CreatePopupMenu()?;
     for (k, (name, _)) in LIGHT.accents.iter().enumerate() {
         item(colors, MF_STRING, ID_ACCENT + k, tr(ACCENT_EN[k], name))?;
