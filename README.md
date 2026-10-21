@@ -24,6 +24,7 @@ Every pane is a real Windows Explorer view, so right-click menus, drag and drop,
 - **Folder favourites**: star a folder from its pane header, jump to it from the star list in the toolbar.
 - **Folder sizes**: the status line also shows the total size of selected folders, summed in the background (F5 sums again; "partial" when some items couldn't be read).
 - **Light and dark themes** with six selection colours each; the active pane is outlined and its header tinted.
+- **Pane colour labels**: right-click a pane header to give the pane one of those colours, shown as a thin strip along its top and behind its number, and next to its name in the ⇄ menu; saved with the session.
 - **Single instance**: running `grids.exe C:\a D:\b` or opening a `.grids` session file reuses the open window.
 - **Portable**: settings live in `grids.ini` next to the exe, named sessions in the `sessions` folder beside it.
 - **English or Korean** (View menu). The Explorer parts inside each pane, such as column names and right-click menus, follow your Windows display language.

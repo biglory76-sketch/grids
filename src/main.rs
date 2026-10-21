@@ -224,6 +224,7 @@ Layout button: click for an even grid, press and drag for rows per column (arrow
 Save (Ctrl+S): overwrite the current session file; green dot = unsaved layout changes (not folder moves)\n\
 Load: pick a saved session by its layout preview\n\
 Double-click a splitter: split evenly\n\
+Right-click a pane header: colour label (saved with the session)\n\
 Arguments: grids.exe C:\\a D:\\b ... or grids.exe work.grids\n\
 If Grids is already running, they open in that window.";
 
@@ -255,6 +256,7 @@ F2, Del, Ctrl+C/X/V, F5\t탐색기와 동일\n\n\
 저장 (Ctrl+S): 지금 세션 파일에 바로 덮어쓰기, 초록 점 = 저장 안 된 배치 변경(폴더 이동은 제외)\n\
 불러오기: 저장한 세션을 배치 미리보기로 보고 한 번 클릭\n\
 스플리터 더블클릭: 균등 분할\n\
+패널 머리줄 오른쪽 클릭: 패널 색 라벨 (세션에 저장)\n\
 실행 인자: grids.exe C:\\a D:\\b ... 또는 grids.exe 작업.grids\n\
 이미 실행 중이면 그 창에서 엽니다.";
 
@@ -280,6 +282,7 @@ struct Session {
     recent: Vec<String>,    // recently visited folders from every pane, newest first, app-wide
     ko: bool,               // Korean UI
     cols: Vec<String>,      // per pane: columns and sort of its view (cols_text)
+    tints: Vec<u8>,         // per pane: colour label, 0 = none, 1..=6 = selection colour preset (this theme's)
 }
 
 impl Default for Session {
@@ -303,6 +306,7 @@ impl Default for Session {
             recent: Vec::new(),
             ko: false,
             cols: vec![String::new(); MAXP],
+            tints: vec![0; MAXP],
         }
     }
 }
@@ -397,6 +401,8 @@ impl Session {
                         s.views[i] = (*m, *z);
                     } else if let Some(i) = slot('c') {
                         s.cols[i] = v.trim().to_string();
+                    } else if let Some(i) = slot('t') {
+                        s.tints[i] = v.trim().parse().ok().filter(|&k| k <= 6).unwrap_or(0);
                     }
                 }
             }
@@ -440,6 +446,9 @@ impl Session {
             if !self.cols[i].is_empty() {
                 o += &format!("c{i}={}\n", self.cols[i]);
             }
+            if self.tints[i] != 0 {
+                o += &format!("t{i}={}\n", self.tints[i]);
+            }
         }
         o
     }
@@ -457,6 +466,7 @@ impl Session {
     fn take_layout(&mut self, o: &Session) {
         (self.heights, self.colr, self.rowr) = (o.heights.clone(), o.colr.clone(), o.rowr.clone());
         (self.active, self.paths, self.views, self.cols) = (o.active, o.paths.clone(), o.views.clone(), o.cols.clone());
+        self.tints = o.tints.clone();
     }
 }
 
@@ -468,6 +478,7 @@ fn layout_differs(cur: &Session, base: &Session) -> bool {
         || cur.rowr.iter().zip(&base.rowr).any(|(a, b)| !near(a, b))
         || (0..cur.panes()).any(|i| base.views[i].0 != 0 && cur.views[i] != base.views[i])
         || (0..cur.panes()).any(|i| !base.cols[i].is_empty() && cur.cols[i] != base.cols[i])
+        || (0..cur.panes()).any(|i| cur.tints[i] != base.tints[i])
 }
 
 // Drives, folders and shares; not shell places like This PC or the Recycle Bin, whose columns are their own.
@@ -757,6 +768,23 @@ fn pane_geo(w: i32, h: i32, dpi: i32) -> PaneGeo {
         // 2px in, so the active ring stays visible around the list
         view: RECT { left: s(2), top: bar, right: w - s(2), bottom: h - s(2) },
     }
+}
+
+// Colour label strip along the pane's top edge: inside the border, above the buttons and fields.
+fn tint_band(w: i32, dpi: i32, active: bool) -> RECT {
+    let s = |v: i32| v * dpi / 96;
+    let inset = if active { s(2) } else { 1 };
+    let top = pane_geo(w, s(100), dpi).num.top;
+    RECT { left: inset, top: inset, right: w - inset, bottom: inset + s(3).min(top - inset) }
+}
+
+// A pane's colour label in this theme: one of the selection colour presets.
+fn tint_color(k: u8) -> Option<u32> {
+    (1..=6).contains(&k).then(|| pal().accents[k as usize - 1].1)
+}
+
+fn tint_name(k: u8) -> &'static str {
+    tr(ACCENT_EN[k as usize - 1], LIGHT.accents[k as usize - 1].0)
 }
 
 fn hit(g: &Geo, x: i32, y: i32) -> Option<Hit> {
@@ -1607,20 +1635,25 @@ unsafe fn open_in(src: usize, dst: usize) {
 }
 
 unsafe fn open_in_menu(h: HWND, src: usize) {
-    // (pane, shown name, folder it held when the menu opened)
+    // (pane, shown name, folder it held when the menu opened, colour label)
     let items = app(|a| {
         let live = a.panes.iter().enumerate().take(a.s.panes());
         let live = live.filter(|(k, _)| *k != src);
-        live.filter_map(|(k, p)| Some((k, p.as_ref()?.disp.clone(), a.s.paths[k].clone()))).collect::<Vec<_>>()
+        live.filter_map(|(k, p)| Some((k, p.as_ref()?.disp.clone(), a.s.paths[k].clone(), a.s.tints[k]))).collect::<Vec<_>>()
     });
+    // "Pane 3 (Sage)    C:\work"
+    let label = |k: usize, t: u8, disp: &str| {
+        let tag = if t == 0 { String::new() } else { format!(" ({})", tint_name(t)) };
+        HSTRING::from(format!("{} {}{tag}    {disp}", tr("Pane", "패널"), k + 1))
+    };
     let arr = view_of::<IFolderView2>(src).and_then(|fv| fv.GetSelection(false).ok());
     let count = arr.as_ref().and_then(|a| a.GetCount().ok()).unwrap_or(0);
     let picked = collect_all(count, |k| unsafe { arr.as_ref()?.GetItemAt(k).ok()?.GetDisplayName(SIGDN_FILESYSPATH).ok().map(|p| pwstr(p)) });
     let Ok(menu) = CreatePopupMenu() else { return };
     _ = AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, &HSTRING::from(tr("Open the selected folder (or this one) in:", "선택한 폴더(없으면 현재 폴더)를 열 패널:")));
     _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
-    for (k, disp, _) in &items {
-        _ = AppendMenuW(menu, MF_STRING, k + 1, &HSTRING::from(format!("{} {}    {disp}", tr("Pane", "패널"), k + 1)));
+    for (k, disp, _, t) in &items {
+        _ = AppendMenuW(menu, MF_STRING, k + 1, &label(*k, *t, disp));
     }
     _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
     match &picked {
@@ -1632,10 +1665,10 @@ unsafe fn open_in_menu(h: HWND, src: usize) {
             ];
             for (mv, base, title) in titles {
                 let Ok(sub) = CreatePopupMenu() else { continue };
-                for (k, disp, path) in &items {
+                for (k, disp, path, t) in &items {
                     let ok = is_fs(path) && send_mode(srcs, path, mv).is_some();
                     let flags = if ok { MF_STRING } else { MF_STRING | MF_GRAYED };
-                    _ = AppendMenuW(sub, flags, base + k, &HSTRING::from(format!("{} {}    {disp}", tr("Pane", "패널"), k + 1)));
+                    _ = AppendMenuW(sub, flags, base + k, &label(*k, *t, disp));
                 }
                 _ = AppendMenuW(menu, MF_POPUP, sub.0 as usize, &HSTRING::from(title));
             }
@@ -1661,7 +1694,7 @@ unsafe fn open_in_menu(h: HWND, src: usize) {
         (p, Ok(srcs)) => {
             // only to the folder the menu showed, and only the whole selection it counted
             let (mv, k) = (p > 200, (p - 1) % 100);
-            let shown = items.iter().find(|(i, ..)| *i == k).map(|(.., path)| path.clone());
+            let shown = items.iter().find(|(i, ..)| *i == k).map(|(_, _, path, _)| path.clone());
             let sent = shown.filter(|s| *s == app(|a| a.s.paths[k].clone())).and_then(|dst| {
                 let rename = send_mode(&srcs, &dst, mv)?;
                 Some(start_copy(srcs, dst, rename, mv))
@@ -1671,6 +1704,26 @@ unsafe fn open_in_menu(h: HWND, src: usize) {
             }
         }
         _ => {}
+    }
+}
+
+// Right-click on a pane header: colour label from the selection colour presets, saved with the session.
+unsafe fn tint_menu(h: HWND, i: usize, at: POINT) {
+    let cur = app(|a| a.s.tints[i]);
+    let Ok(menu) = CreatePopupMenu() else { return };
+    _ = AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, &HSTRING::from(tr("Pane colour", "패널 색")));
+    _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
+    for k in 0..=6u8 {
+        let flags = if k == cur { MF_STRING | MF_CHECKED } else { MF_STRING };
+        let name = if k == 0 { tr("None", "없음") } else { tint_name(k) };
+        _ = AppendMenuW(menu, flags, k as usize + 1, &HSTRING::from(name));
+    }
+    let pick = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_LEFTALIGN | TPM_TOPALIGN, at.x, at.y, None, h, None).0;
+    _ = DestroyMenu(menu);
+    if pick > 0 {
+        app(|a| a.s.tints[i] = pick as u8 - 1);
+        repaint_header(h);
+        check_dirty();
     }
 }
 
@@ -3673,12 +3726,13 @@ unsafe fn crumb_hover(h: HWND, k: Option<usize>) {
 
 // One white plate per pane: a single accent border when active, flat fields in the top bar.
 unsafe fn paint_pane(h: HWND) {
-    let (active, i, dpi, icon_font, small_font, font, accent, hot) = app(|a| {
+    let (active, i, dpi, icon_font, small_font, font, accent, hot, tint) = app(|a| {
         let i = a.panes.iter().position(|p| p.as_ref().is_some_and(|p| p.hwnd == h));
         // a drop target-to-be looks active too
         let active = a.panes[a.s.active].as_ref().is_some_and(|p| p.hwnd == h) || a.drop_hover == h;
         let hot = a.crumb_hot.filter(|(w, _)| *w == h).map(|(_, k)| k);
-        (active, i, a.dpi, a.icon_font, a.small_font, a.font, a.s.accent_now(), hot)
+        let tint = i.and_then(|i| tint_color(a.s.tints[i]));
+        (active, i, a.dpi, a.icon_font, a.small_font, a.font, a.s.accent_now(), hot, tint)
     });
     let crumbs_on = GetDlgItem(Some(h), ID_EDIT).is_ok_and(|e| !IsWindowVisible(e).as_bool());
     let filtered = i.is_some_and(|i| FILTERS.lock().is_ok_and(|f| !f[i].is_empty()));
@@ -3698,8 +3752,20 @@ unsafe fn paint_pane(h: HWND) {
             frame(dc, rc, 1, pal().line);
             fill(dc, RECT { left: pg.view.left, top: pg.view.top - 1, right: pg.view.right, bottom: pg.view.top }, pal().line);
         }
+        // colour label: a strip above the buttons, and the number on a chip of that colour
+        if let Some(t) = tint {
+            fill(dc, tint_band(rc.right, dpi, active), t);
+        }
         if let Some(i) = i.filter(|_| pg.num.right > pg.num.left) {
-            text(dc, pg.num, &(i + 1).to_string(), small_font, if active { ink } else { pal().sub }, DT_CENTER);
+            let ink = match tint {
+                Some(t) => {
+                    fill(dc, pg.num, t);
+                    on_color(t)
+                }
+                None if active => ink,
+                None => pal().sub,
+            };
+            text(dc, pg.num, &(i + 1).to_string(), small_font, ink, DT_CENTER);
         }
         for (p, on) in [(pg.addr, addr_on), (pg.filt, filt_on)] {
             fill(dc, p, pal().pill);
@@ -5668,6 +5734,18 @@ extern "system" fn pane_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESU
                     recent_menu(i);
                 }
             }
+            // right-click on the header itself (not its buttons or fields): colour label
+            WM_CONTEXTMENU if wp.0 == h.0 as usize => {
+                let mut p = POINT { x: (lp.0 & 0xffff) as i16 as i32, y: (lp.0 >> 16 & 0xffff) as i16 as i32 };
+                let screen = p;
+                _ = ScreenToClient(h, &mut p);
+                let mut rc = RECT::default();
+                _ = GetClientRect(h, &mut rc);
+                match pane_of(h) {
+                    Some(i) if lp.0 != -1 && p.y < pane_geo(rc.right, rc.bottom, app(|a| a.dpi)).view.top => tint_menu(h, i, screen),
+                    _ => return DefWindowProcW(h, msg, wp, lp),
+                }
+            }
             // mouse side buttons
             WM_APPCOMMAND => match (lp.0 >> 16) & 0x0fff {
                 1 => nav(SBSP_NAVIGATEBACK),
@@ -6192,6 +6270,24 @@ mod tests {
         cur.colr = vec![0.3, 0.7];
         assert!(layout_differs(&cur, &base));
         assert!(!s.snapshot().contains("win=") && !s.snapshot().contains("session="));
+        // colour labels: round trip, garbage and older ini -> none; a label change alone counts; named sessions keep them
+        let mut t = s.clone();
+        t.tints[3] = 4;
+        assert_eq!(Session::parse(&t.to_ini()).tints[3], 4);
+        assert!(t.snapshot().contains("t3=4\n") && !s.to_ini().contains("t3="));
+        assert_eq!(Session::parse("t5=9\nt6=x\nt99=2").tints, vec![0; MAXP]);
+        assert_eq!(Session::parse(&s.to_ini()).tints, vec![0; MAXP]);
+        assert!(layout_differs(&t, &s));
+        // the label strip sits inside the border and above the buttons and fields
+        for dpi in [96, 120, 144, 192] {
+            for w in [120, 400] {
+                for active in [false, true] {
+                    let (b, top) = (tint_band(w, dpi, active), pane_geo(w, 300, dpi).num.top);
+                    let border = if active { 2 * dpi / 96 } else { 1 };
+                    assert!(b.top >= border && b.bottom <= top && b.bottom - b.top >= 2, "{dpi} {w} {active}");
+                }
+            }
+        }
         // the drawn star: solid middle and empty corners when filled; hollow middle as an outline
         let (full, ring) = (star_coverage(15, Star::Filled), star_coverage(15, Star::Outline));
         assert_eq!((full[7 * 15 + 7], full[0], full[14 * 15 + 14]), (255, 0, 0));
