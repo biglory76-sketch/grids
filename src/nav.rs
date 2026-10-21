@@ -922,9 +922,8 @@ impl ICommDlgBrowser_Impl for Host_Impl {
         }
         unsafe {
             let sf: IShellFolder = sv.ok()?.cast::<IFolderView>()?.GetFolder()?;
-            let mut attr = SFGAO_FOLDER.0;
-            _ = sf.GetAttributesOf(&[pidl], &mut attr);
-            if attr & SFGAO_FOLDER.0 != 0 {
+            let mut attr = SFGAO_FOLDER.0 | SFGAO_STREAM.0;
+            if filter_keeps_unnamed(sf.GetAttributesOf(&[pidl], &mut attr).ok().map(|_| attr)) {
                 return Ok(()); // folders stay, so a filtered pane can still be navigated
             }
             let mut sr = STRRET::default();

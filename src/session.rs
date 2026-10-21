@@ -516,6 +516,16 @@ pub(crate) fn filter_spec(text: &str) -> String {
     parts.collect::<Vec<_>>().join(";")
 }
 
+/// A folder you browse, not a ZIP/CAB/7z (Windows reports those as FOLDER|STREAM): those match by name like files.
+pub(crate) fn real_folder(attr: u32) -> bool {
+    attr & SFGAO_FOLDER.0 != 0 && attr & SFGAO_STREAM.0 == 0
+}
+
+/// The filter keeps real folders without looking at the name, and anything whose attributes couldn't be read (None).
+pub(crate) fn filter_keeps_unnamed(attr: Option<u32>) -> bool {
+    attr.map_or(true, real_folder)
+}
+
 /// "a.PDF" -> "*.PDF" for the filter's "same type as the selected file"; folders and names without an extension: None.
 pub(crate) fn same_type(name: &str, is_dir: bool) -> Option<String> {
     let (stem, ext) = name.rsplit_once('.')?;

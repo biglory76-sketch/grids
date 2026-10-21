@@ -139,7 +139,7 @@ pub(crate) unsafe fn run_match(flip: bool) {
     let n = bulk_select(&fv, |k| {
         let Ok(it) = fv.GetItem::<IShellItem>(k) else { return false };
         let attr = it.GetAttributes(SFGAO_FLAGS(SFGAO_FOLDER.0 | SFGAO_STREAM.0)).unwrap_or_default().0;
-        if attr & SFGAO_FOLDER.0 != 0 && attr & SFGAO_STREAM.0 == 0 {
+        if real_folder(attr) {
             return false;
         }
         let Ok(name) = it.GetDisplayName(SIGDN_PARENTRELATIVEPARSING).map(|p| pwstr(p)) else { return false };

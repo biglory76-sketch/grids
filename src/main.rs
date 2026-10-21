@@ -769,6 +769,11 @@ mod tests {
         assert_eq!(session_arg(&["a.grids".into(), "b".into()]), None);
 
         assert_eq!(filter_spec(" pdf; *.TXT ;"), "*pdf*;*.TXT");
+        // filter / Num+: ZIPs (FOLDER|STREAM) match by name like files; an unreadable item stays in the filtered list
+        let (f, s) = (SFGAO_FOLDER.0, SFGAO_STREAM.0);
+        assert_eq!([real_folder(f), real_folder(f | s), real_folder(s), real_folder(0)], [true, false, false, false]);
+        let keeps = [None, Some(f), Some(f | s), Some(0)].map(filter_keeps_unnamed);
+        assert_eq!(keeps, [true, true, false, false]);
         assert_eq!((human(10), human(1536), human(5 << 30)), ("10 B".into(), "1.5 KB".into(), "5.0 GB".into()));
 
         // pane top bar: number, back, fwd, up, address, ⇄, filter left to right, nothing overlapping, inside the plate
