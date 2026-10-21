@@ -2,20 +2,47 @@ use crate::*;
 
 // ---------- sessions ----------
 
+// grids.ini text for the current state. Views must be saved first (save_view).
+unsafe fn ini_now() -> String {
+    let mut wp = WINDOWPLACEMENT { length: size_of::<WINDOWPLACEMENT>() as u32, ..Default::default() };
+    _ = GetWindowPlacement(app(|a| a.main), &mut wp);
+    app(|a| {
+        let r = wp.rcNormalPosition; // the restore rectangle, also while minimized
+        a.s.win = Some([r.left, r.top, r.right, r.bottom, a.was_max as i32]);
+        a.s.to_ini()
+    })
+}
+
+// On failure the old grids.ini stays and autosave tries again in 5 seconds.
+unsafe fn store_ini(ini: String) {
+    let ok = write_ini(&ini_path(), &ini).is_ok();
+    app(|a| {
+        if ok {
+            (a.saved_ini, a.save_after) = (ini, None);
+        } else {
+            a.save_after = Some(Instant::now() + Duration::from_secs(5));
+        }
+    });
+}
+
 pub(crate) unsafe fn save_session() {
-    let (main, n) = app(|a| (a.main, a.s.panes()));
-    for i in 0..n {
+    for i in 0..app(|a| a.s.panes()) {
         save_view(i);
     }
-    let mut wp = WINDOWPLACEMENT { length: size_of::<WINDOWPLACEMENT>() as u32, ..Default::default() };
-    _ = GetWindowPlacement(main, &mut wp);
-    let ini = app(|a| {
-        let r = wp.rcNormalPosition;
-        let max = (wp.showCmd == SW_SHOWMAXIMIZED.0 as u32) as i32;
-        a.s.win = Some([r.left, r.top, r.right, r.bottom, max]);
-        a.s.to_ini()
-    });
-    _ = std::fs::write(ini_path(), ini);
+    store_ini(ini_now());
+}
+
+// Runs right after check_dirty (which saved the views): writes grids.ini whenever its text changes, so a restart,
+// sign-out or crash loses nothing. Not mid-drag or mid-resize.
+pub(crate) unsafe fn autosave() {
+    let now = Instant::now();
+    if app(|a| a.drag.is_some() || a.sizing || a.save_after.is_some_and(|t| t > now)) {
+        return;
+    }
+    let ini = ini_now();
+    if app(|a| a.saved_ini != ini) {
+        store_ini(ini);
+    }
 }
 
 // Save button / Ctrl+S: overwrite the current session file; the first time, ask for a name.

@@ -375,6 +375,34 @@ pub(crate) fn ini_path() -> PathBuf {
     std::env::current_exe().unwrap_or_default().with_file_name("grids.ini")
 }
 
+// grids.ini in `dir`, else qdir.ini (settings from before the rename), else None for defaults.
+// Only "not there" falls through: a locked or unreadable grids.ini is an error, so it is never replaced by defaults.
+pub(crate) fn load_ini(dir: &Path) -> std::io::Result<Option<String>> {
+    for name in ["grids.ini", "qdir.ini"] {
+        match std::fs::read(dir.join(name)) {
+            Ok(b) => return Ok(Some(String::from_utf8_lossy(&b).into_owned())),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(None)
+}
+
+// Write next to `path` and swap it in, so a cut-off write never leaves half an ini; on failure the old file stays.
+pub(crate) fn write_ini(path: &Path, text: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut tmp = path.as_os_str().to_owned();
+    tmp.push(".tmp");
+    let tmp = PathBuf::from(tmp);
+    let r = std::fs::File::create(&tmp)
+        .and_then(|mut f| f.write_all(text.as_bytes()).and_then(|_| f.sync_all()))
+        .and_then(|_| std::fs::rename(&tmp, path));
+    if r.is_err() {
+        _ = std::fs::remove_file(&tmp);
+    }
+    r
+}
+
 pub(crate) fn sessions_dir() -> PathBuf {
     ini_path().with_file_name("sessions")
 }

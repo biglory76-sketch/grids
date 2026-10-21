@@ -27,7 +27,7 @@ Every pane is a real Windows Explorer view, so right-click menus, drag and drop,
 - **Light and dark themes** with six selection colours each; the active pane is outlined and its header tinted.
 - **Pane colour labels**: right-click a pane header to give the pane one of those colours, shown as a thin strip along its top and behind its number, and next to its name in the ⇄ menu; saved with the session.
 - **Single instance**: running `grids.exe C:\a D:\b` or opening a `.grids` session file reuses the open window.
-- **Portable**: settings live in `grids.ini` next to the exe, named sessions in the `sessions` folder beside it.
+- **Portable**: settings live in `grids.ini` next to the exe, named sessions in the `sessions` folder beside it. Changes are saved automatically as you make them, so after a Windows restart, sign-out or crash Grids reopens the last state it managed to save.
 - **English or Korean** (View menu). The Explorer parts inside each pane, such as column names and right-click menus, follow your Windows display language.
 
 | Layout picker | Sessions | Favourites |

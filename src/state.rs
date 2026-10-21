@@ -26,6 +26,9 @@ pub(crate) struct App {
     pub(crate) panes: Vec<Option<Pane>>,
     pub(crate) drag: Option<Hit>,
     pub(crate) sizing: bool, // inside the window's own move/size loop
+    pub(crate) was_max: bool, // maximized when last not minimized (saved as such while minimized)
+    pub(crate) saved_ini: String, // grids.ini text last written
+    pub(crate) save_after: Option<Instant>, // a failed write: autosave waits until then
     pub(crate) status: String,
     pub(crate) status_key: String,
     pub(crate) status_base: (String, Option<(u64, bool, bool)>, String), // text before / after the selection size, (file bytes, has folders, partial)
@@ -90,6 +93,9 @@ thread_local! {
         panes: (0..MAXP).map(|_| None).collect(),
         drag: None,
         sizing: false,
+        was_max: false,
+        saved_ini: String::new(),
+        save_after: None,
         status: String::new(),
         status_key: String::new(),
         status_base: Default::default(),

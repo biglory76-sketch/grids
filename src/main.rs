@@ -107,8 +107,22 @@ fn main() -> Result<()> {
         }
 
         OleInitialize(None)?; // OLE (not just COM) for drag & drop
-        // qdir.ini: settings from before the rename, read once until grids.ini exists
-        let ini = std::fs::read_to_string(ini_path()).or_else(|_| std::fs::read_to_string(ini_path().with_file_name("qdir.ini")));
+        // A grids.ini that is there but unreadable (locked, no access) must not be overwritten with defaults:
+        // retry, or quit before anything could save. The language is not known yet, so both.
+        let ini = loop {
+            match load_ini(ini_path().parent().unwrap_or(Path::new("."))) {
+                Ok(t) => break t,
+                Err(e) => {
+                    let text = HSTRING::from(format!(
+                        "Grids could not read its settings file (grids.ini): {e}. Retry, or Cancel to quit without changing it.\n\n\
+                         Grids 설정 파일(grids.ini)을 읽지 못했습니다: {e}. 다시 시도하거나, 취소하면 파일을 바꾸지 않고 종료합니다."
+                    ));
+                    if MessageBoxW(None, &text, w!("Grids"), MB_RETRYCANCEL | MB_ICONWARNING) != IDRETRY {
+                        return Ok(());
+                    }
+                }
+            }
+        };
         let mut s = ini.map(|t| Session::parse(&t)).unwrap_or_default();
         match session_arg(&args).and_then(|f| std::fs::read_to_string(f).ok()) {
             Some(t) => s.take_layout(&Session::parse(&t)),
@@ -734,6 +748,33 @@ mod tests {
         assert!(!s.snapshot().contains("recent="));
         let many: String = (0..30).map(|k| format!("recent=C:\\{k}\n")).collect();
         assert_eq!(Session::parse(&many).recent.len(), RECENT);
+    }
+
+    #[test]
+    fn ini_write_and_load() {
+        let dir = tree("ini", &[]);
+        let ini = dir.join("grids.ini");
+        let tmp = dir.join("grids.ini.tmp");
+        // nothing there: defaults; only qdir.ini: that one
+        assert!(load_ini(&dir).unwrap().is_none());
+        std::fs::write(dir.join("qdir.ini"), "dark=1\n").unwrap();
+        assert_eq!(load_ini(&dir).unwrap().as_deref(), Some("dark=1\n"));
+        // the second write wins, round-trips, and leaves no .tmp
+        let s = Session { recent: vec![r"C:\a".into()], ..Default::default() };
+        write_ini(&ini, "dark=0\n").unwrap();
+        write_ini(&ini, &s.to_ini()).unwrap();
+        let back = load_ini(&dir).unwrap().unwrap();
+        assert_eq!(back, s.to_ini());
+        assert_eq!(Session::parse(&back).to_ini(), s.to_ini());
+        assert!(!tmp.exists());
+        // a grids.ini that cannot be read is an error, not a fall back to qdir.ini / defaults
+        std::fs::remove_file(&ini).unwrap();
+        std::fs::create_dir(&ini).unwrap();
+        assert!(load_ini(&dir).is_err());
+        // and a swap that fails reports it and cleans up
+        assert!(write_ini(&ini, "dark=1\n").is_err());
+        assert!(!tmp.exists() && ini.is_dir());
+        _ = std::fs::remove_dir_all(&dir);
     }
 
     // A fresh folder under %TEMP% holding `files` (relative path, size).

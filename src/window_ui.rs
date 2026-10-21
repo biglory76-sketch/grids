@@ -18,7 +18,13 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
         match msg {
             // While the user drags the window edge, lay the panes out once at the end (same cost reason as splitters).
             WM_SIZE => {
-                if !app(|a| a.sizing) {
+                let sizing = app(|a| {
+                    if wp.0 as u32 != SIZE_MINIMIZED {
+                        a.was_max = wp.0 as u32 == SIZE_MAXIMIZED;
+                    }
+                    a.sizing
+                });
+                if !sizing {
                     relayout();
                     redraw_all(); // maximize / restore
                 }
@@ -49,6 +55,7 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
             WM_TIMER if wp.0 == TIMER_STATUS => {
                 update_status();
                 check_dirty();
+                autosave();
             }
             WM_SETCURSOR if wp.0 == h.0 as usize && (lp.0 & 0xffff) as u32 == HTCLIENT => {
                 let Some(d) = app(|a| a.drag).or_else(|| cursor_for(h)) else {
@@ -161,6 +168,8 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 save_session();
                 _ = DestroyWindow(h);
             }
+            // Windows restart / sign-out: no WM_CLOSE comes. WM_QUERYENDSESSION stays with DefWindowProcW (never blocks).
+            WM_ENDSESSION if wp.0 != 0 => save_session(),
             WM_DESTROY => {
                 _ = KillTimer(Some(h), TIMER_STATUS);
                 for i in 0..MAXP {
