@@ -228,6 +228,10 @@ pub(crate) unsafe fn update_status() {
         let (head, size, tail) = &a.status_base;
         let size = size.map(|(f, d, p)| size_text(ko, f, d, job, p)).unwrap_or_default();
         // a short confirmation (path copied, missing folder) leads for a few seconds: the line's end gets cut when it's too long
+        if let Some(saved) = SAVED.lock().unwrap_or_else(|e| e.into_inner()).take() {
+            a.note = Some((saved, Instant::now() + Duration::from_secs(5)));
+            a.lost = 0;
+        }
         a.note = a.note.take().filter(|(_, t)| Instant::now() < *t);
         if a.note.is_none() {
             a.lost = 0;

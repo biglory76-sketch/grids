@@ -193,6 +193,7 @@ F6 / Shift+F6\tMove between file list, address bar, filter and folder tree\n\
 Enter / Esc\tApply / cancel the address or filter\n\
 Ctrl+H\tShow hidden files\n\
 F3\tQuick preview of the focused file (arrows: previous / next, Esc: close)\n\
+Ctrl+V\tWith a copied picture (screenshot, browser image): save it here as a PNG file\n\
 F1\tHelp (opens the README on GitHub)\n\
 Win+Alt+E\tBring Grids to front from any app (again: minimize)\n\
 F2, Del, Ctrl+C/X/V, F5\tSame as Explorer\n\n\
@@ -230,6 +231,7 @@ F6 / Shift+F6\t파일 목록·주소창·필터·폴더 트리 사이 이동\n\
 Enter / Esc\t주소창·필터 적용 / 취소\n\
 Ctrl+H\t숨김 파일 표시\n\
 F3\t포커스한 파일 빠른 미리보기 (방향키: 이전·다음, Esc: 닫기)\n\
+Ctrl+V\t복사한 그림(스크린샷, 브라우저 이미지)이 있으면 이 폴더에 PNG 파일로 저장\n\
 F1\t도움말 (GitHub README 열기)\n\
 Win+Alt+E\t어디서나 Grids 앞으로 (다시 누르면 최소화)\n\
 F2, Del, Ctrl+C/X/V, F5\t탐색기와 동일\n\n\

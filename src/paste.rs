@@ -1,4 +1,8 @@
 use crate::*;
+use windows::Win32::Graphics::Imaging::*;
+use windows::Win32::System::DataExchange::IsClipboardFormatAvailable;
+use windows::Win32::System::Memory::GlobalSize;
+use windows::Win32::System::SystemInformation::GetLocalTime;
 
 // ---------- background paste ----------
 
@@ -144,10 +148,171 @@ pub(crate) unsafe fn try_paste(a: usize) -> bool {
             _ = GlobalUnlock(HGLOBAL(h.0));
         }
     }
+    let has = |f: PCWSTR| IsClipboardFormatAvailable(RegisterClipboardFormatW(f)).is_ok();
+    let pic = picture_only(
+        !srcs.is_empty(),
+        has(w!("Shell IDList Array")),
+        has(w!("FileGroupDescriptorW")) || has(w!("FileGroupDescriptor")),
+        IsClipboardFormatAvailable(CF_UNICODETEXT.0 as u32).is_ok(),
+    )
+    .then(|| clip_picture())
+    .flatten();
     _ = CloseClipboard();
+    if let Some(pic) = pic {
+        return start_picture(pic, dst);
+    }
     let copy = effect.is_none_or(|e| e & DROPEFFECT_MOVE.0 == 0 && e & DROPEFFECT_COPY.0 != 0);
     let Some(rename) = paste_mode(&srcs, &dst).filter(|_| copy) else { return false };
     start_copy(srcs, dst, rename, false)
+}
+
+// ---------- a copied picture pasted as a PNG file ----------
+
+// Only a bare picture: files, virtual files (Outlook attachments) and text (Office copies) stay with the shell.
+pub(crate) fn picture_only(has_hdrop_items: bool, has_idlist: bool, has_fgd: bool, has_text: bool) -> bool {
+    !(has_hdrop_items || has_idlist || has_fgd || has_text)
+}
+
+pub(crate) enum Pic {
+    Png(Vec<u8>),
+    Dib(Vec<u8>),
+}
+
+// The clipboard's "PNG" bytes (Snipping Tool, browsers: keeps transparency), else its CF_DIB. Clipboard open.
+unsafe fn clip_picture() -> Option<Pic> {
+    let bytes = |fmt: u32| {
+        let h = HGLOBAL(GetClipboardData(fmt).ok()?.0);
+        let p = GlobalLock(h) as *const u8;
+        if p.is_null() {
+            return None;
+        }
+        let v = std::slice::from_raw_parts(p, GlobalSize(h)).to_vec();
+        _ = GlobalUnlock(h);
+        Some(v)
+    };
+    if let Some(mut png) = bytes(RegisterClipboardFormatW(w!("PNG"))).filter(|b| b.starts_with(b"\x89PNG\r\n\x1a\n")) {
+        // GlobalSize rounds up: drop the padding after the IEND chunk
+        if let Some(i) = png.windows(4).rposition(|w| w == b"IEND").filter(|i| i + 8 <= png.len()) {
+            png.truncate(i + 8);
+        }
+        return Some(Pic::Png(png));
+    }
+    bytes(CF_DIB.0 as u32).map(Pic::Dib)
+}
+
+// A CF_DIB as a .bmp file: BITMAPFILEHEADER + the DIB. None when the header or palette is cut short.
+pub(crate) fn dib_to_bmp(dib: &[u8]) -> Option<Vec<u8>> {
+    let u32_at = |i: usize| Some(u32::from_le_bytes(dib.get(i..i + 4)?.try_into().ok()?));
+    let size = u32_at(0)? as usize;
+    let bits = u16::from_le_bytes(dib.get(14..16)?.try_into().ok()?);
+    let (compression, used) = (u32_at(16)?, u32_at(32)? as usize);
+    if size < 40 {
+        return None;
+    }
+    let colors = if used > 0 { used } else if bits <= 8 { 1 << bits } else { 0 };
+    let masks = if size == 40 && compression == 3 { 12 } else { 0 }; // BI_BITFIELDS after a plain BITMAPINFOHEADER
+    let off = colors.checked_mul(4)?.checked_add(size + masks)?;
+    if off >= dib.len() {
+        return None;
+    }
+    let mut bmp = Vec::with_capacity(14 + dib.len());
+    bmp.extend_from_slice(b"BM");
+    bmp.extend_from_slice(&u32::try_from(14 + dib.len()).ok()?.to_le_bytes());
+    bmp.extend_from_slice(&[0; 4]);
+    bmp.extend_from_slice(&(14 + off as u32).to_le_bytes());
+    bmp.extend_from_slice(dib);
+    Some(bmp)
+}
+
+// "Clipboard image 2026-10-21 153012.png", " (k)" from the second try on.
+pub(crate) fn image_name(ko: bool, t: &SYSTEMTIME, k: u32) -> String {
+    let head = if ko { "클립보드 이미지" } else { "Clipboard image" };
+    let n = if k >= 2 { format!(" ({k})") } else { String::new() };
+    format!("{head} {:04}-{:02}-{:02} {:02}{:02}{:02}{n}.png", t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond)
+}
+
+// Writes `bytes` under the first free name_of(1..=999); never replaces a file. Returns the name used.
+pub(crate) fn save_unique(dir: &Path, name_of: impl Fn(u32) -> String, bytes: &[u8]) -> std::io::Result<String> {
+    use std::io::{ErrorKind, Write};
+    for k in 1..=999 {
+        let name = name_of(k);
+        let path = dir.join(&name);
+        match std::fs::OpenOptions::new().write(true).create_new(true).open(&path) {
+            Ok(mut f) => {
+                if let Err(e) = f.write_all(bytes) {
+                    drop(f);
+                    _ = std::fs::remove_file(&path); // only the file just created
+                    return Err(e);
+                }
+                return Ok(name);
+            }
+            Err(e) if e.kind() == ErrorKind::AlreadyExists => {}
+            Err(e) => return Err(e),
+        }
+    }
+    Err(ErrorKind::AlreadyExists.into())
+}
+
+// The status line shows this on its next tick (set by the worker, taken by update_status).
+pub(crate) static SAVED: Mutex<Option<String>> = Mutex::new(None);
+
+// Encodes and saves on a worker thread; the panes, views, focus and selection are left alone
+// (the view lists the new file itself). False = the thread didn't start.
+pub(crate) unsafe fn start_picture(pic: Pic, dst: String) -> bool {
+    let ko = KO.load(Ordering::Relaxed);
+    let job = std::thread::Builder::new().spawn(move || {
+        let com = CoInitializeEx(None, COINIT_MULTITHREADED).is_ok();
+        let png = match pic {
+            Pic::Png(b) => Ok(b),
+            Pic::Dib(d) => dib_to_bmp(&d).ok_or_else(|| tr("unreadable picture", "읽을 수 없는 그림").to_string()).and_then(|b| to_png(&b).map_err(|e| e.message())),
+        };
+        let now = GetLocalTime();
+        match png.and_then(|b| save_unique(Path::new(&dst), |k| image_name(ko, &now, k), &b).map_err(|e| e.to_string())) {
+            Ok(name) => *SAVED.lock().unwrap_or_else(|e| e.into_inner()) = Some(if ko { format!("{name} 저장함") } else { format!("Saved {name}") }),
+            Err(e) => {
+                let what = tr("Couldn't save the clipboard picture: ", "클립보드 그림을 저장하지 못했습니다: ");
+                MessageBoxW(None, &HSTRING::from(format!("{what}{e}")), w!("Grids"), MB_ICONWARNING);
+            }
+        }
+        if com {
+            CoUninitialize();
+        }
+    });
+    let Ok(job) = job else { return false };
+    keep_job(job);
+    true
+}
+
+// A .bmp file's bytes re-encoded as PNG with WIC, all in memory.
+unsafe fn to_png(bmp: &[u8]) -> Result<Vec<u8>> {
+    let wic: IWICImagingFactory = CoCreateInstance(&CLSID_WICImagingFactory, None, CLSCTX_INPROC_SERVER)?;
+    let input = SHCreateMemStream(Some(bmp)).ok_or_else(|| Error::from(E_OUTOFMEMORY))?;
+    let src = wic.CreateDecoderFromStream(&input, std::ptr::null(), WICDecodeMetadataCacheOnDemand)?.GetFrame(0)?;
+    let out = SHCreateMemStream(None).ok_or_else(|| Error::from(E_OUTOFMEMORY))?;
+    let enc = wic.CreateEncoder(&GUID_ContainerFormatPng, std::ptr::null())?;
+    enc.Initialize(&out, WICBitmapEncoderNoCache)?;
+    let (mut frame, mut props) = (None, None);
+    enc.CreateNewFrame(&mut frame, &mut props)?;
+    let frame = frame.ok_or_else(|| Error::from(E_FAIL))?;
+    frame.Initialize(props.as_ref())?;
+    frame.WriteSource(&src, std::ptr::null())?;
+    frame.Commit()?;
+    enc.Commit()?;
+    let mut len = 0u64;
+    out.Seek(0, STREAM_SEEK_END, Some(&mut len))?;
+    out.Seek(0, STREAM_SEEK_SET, None)?;
+    let mut png = vec![0u8; len as usize];
+    let mut read = 0u32;
+    out.Read(png.as_mut_ptr().cast(), len as u32, Some(&mut read)).ok()?;
+    png.truncate(read as usize);
+    Ok(png)
+}
+
+fn keep_job(job: std::thread::JoinHandle<()>) {
+    JOBS.with_borrow_mut(|j| {
+        j.retain(|j| !j.is_finished());
+        j.push(job);
+    });
 }
 
 // Copies (or, with `mv`, moves) `srcs` into `dst` on a worker thread. False = the thread didn't start.
@@ -168,10 +333,7 @@ pub(crate) unsafe fn start_copy(srcs: Vec<String>, dst: String, rename: bool, mv
         }
     });
     let Ok(job) = job else { return false };
-    JOBS.with_borrow_mut(|j| {
-        j.retain(|j| !j.is_finished());
-        j.push(job);
-    });
+    keep_job(job);
     true
 }
 

@@ -681,6 +681,45 @@ mod tests {
     }
 
     #[test]
+    fn paste_picture() {
+        // a BITMAPINFOHEADER (size, bit count, compression, colours used) and `extra` bytes after it
+        let dib = |size: u32, bits: u16, comp: u32, used: u32, extra: usize| {
+            let mut d = vec![0u8; size as usize + extra];
+            d[0..4].copy_from_slice(&size.to_le_bytes());
+            d[14..16].copy_from_slice(&bits.to_le_bytes());
+            d[16..20].copy_from_slice(&comp.to_le_bytes());
+            d[32..36].copy_from_slice(&used.to_le_bytes());
+            d
+        };
+        let off = |b: Vec<u8>| (u32::from_le_bytes(b[2..6].try_into().unwrap()), u32::from_le_bytes(b[10..14].try_into().unwrap()), b[..2].to_vec());
+        assert_eq!(dib_to_bmp(&dib(40, 24, 0, 0, 12)).map(off), Some((66, 54, b"BM".to_vec())));
+        assert_eq!(dib_to_bmp(&dib(40, 32, 3, 0, 16)).map(off), Some((70, 66, b"BM".to_vec()))); // BI_BITFIELDS masks
+        assert_eq!(dib_to_bmp(&dib(124, 32, 3, 0, 16)).map(|b| off(b).1), Some(138)); // V5: masks inside the header
+        assert_eq!(dib_to_bmp(&dib(40, 8, 0, 0, 1024 + 4)).map(|b| off(b).1), Some(1078)); // 256-colour palette
+        assert_eq!(dib_to_bmp(&dib(40, 8, 0, 2, 8 + 4)).map(|b| off(b).1), Some(62));
+        assert_eq!(dib_to_bmp(&dib(40, 8, 0, 0, 1024)), None); // palette but no pixels
+        assert_eq!(dib_to_bmp(&dib(40, 24, 0, 0, 0)), None);
+        assert_eq!(dib_to_bmp(&dib(40, 24, 0, 0, 4)[..20]), None);
+        assert_eq!(dib_to_bmp(&[]), None);
+
+        assert!(picture_only(false, false, false, false));
+        for k in 0..4 {
+            assert!(!picture_only(k == 0, k == 1, k == 2, k == 3));
+        }
+
+        let t = SYSTEMTIME { wYear: 2026, wMonth: 10, wDay: 21, wHour: 15, wMinute: 30, wSecond: 2, ..Default::default() };
+        assert_eq!(image_name(false, &t, 1), "Clipboard image 2026-10-21 153002.png");
+        assert_eq!(image_name(true, &t, 2), "클립보드 이미지 2026-10-21 153002 (2).png");
+
+        let dir = tree("picture", &[("a.png".into(), 3)]);
+        let name = |k: u32| if k == 1 { "a.png".to_string() } else { format!("a ({k}).png") };
+        assert_eq!(save_unique(&dir, name, b"new").unwrap(), "a (2).png");
+        assert_eq!((std::fs::read(dir.join("a.png")).unwrap(), std::fs::read(dir.join("a (2).png")).unwrap()), (vec![0; 3], b"new".to_vec()));
+        assert_eq!(save_unique(&dir, name, b"x").unwrap(), "a (3).png");
+        _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn session_layout_args() {
         let mut s = Session { side: 200, active: 3, ..Default::default() };
         s.set_heights(vec![1, 3]);

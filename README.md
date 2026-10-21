@@ -65,6 +65,7 @@ The exe is not code-signed, so Windows SmartScreen may warn the first time: choo
 | Win+Alt+E | Bring Grids to front from any app, ready to type in the active pane (again: minimize; View menu turns it off) |
 | Ctrl+H | Show hidden files |
 | F3 | Quick preview of the focused file (arrows: previous / next, Esc: close) |
+| Ctrl+V | With a copied picture (screenshot, browser image): save it here as a PNG file |
 | Ctrl+S | Save the current session |
 | Ctrl+B | Favourites list (↑/↓, Enter to open, Del to remove, Alt+↑/↓ or drag to reorder) |
 | Ctrl+/ | Keyboard shortcuts (this list) |
