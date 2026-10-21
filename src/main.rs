@@ -331,6 +331,31 @@ mod tests {
     use super::*;
 
     #[test]
+    fn gather() {
+        let s = |v: &[&str]| v.iter().map(|p| p.to_string()).collect::<Vec<_>>();
+        let o = |v: &[(usize, &str)]| v.iter().map(|&(i, p)| (i, p.to_string())).collect::<Vec<_>>();
+        let plan = |found: &[&str], open: &[(usize, &str)], active, n| gather_plan(&s(found), &o(open), active, n);
+        // A stays in pane 0; E takes the next pane, and a second run finds nothing to do
+        assert_eq!(plan(&["A", "E"], &[(0, "A"), (1, "B"), (2, "C"), (3, "D")], 0, 4), (o(&[(1, "E")]), 0));
+        assert_eq!(plan(&["A", "E"], &[(0, "A"), (1, "E"), (2, "C"), (3, "D")], 0, 4), (vec![], 0));
+        // case and a trailing \ don't matter
+        assert_eq!(plan(&["C:\\A", "c:\\a\\", "D:\\X"], &[(0, "C:\\A"), (1, "B")], 0, 2), (o(&[(1, "D:\\X")]), 0));
+        assert_eq!(plan(&["C:\\A", "c:\\a\\"], &[(0, "B"), (1, "B")], 0, 2), (o(&[(0, "C:\\A")]), 0));
+        // the same folder in two panes keeps one of them
+        assert_eq!(plan(&["A", "E"], &[(0, "A"), (1, "A")], 0, 2), (o(&[(1, "E")]), 0));
+        // from the active pane on, wrapping round
+        assert_eq!(plan(&["E", "F", "G"], &[(0, "A"), (1, "B"), (2, "C"), (3, "D")], 3, 4), (o(&[(3, "E"), (0, "F"), (1, "G")]), 0));
+        // too few panes
+        assert_eq!(plan(&["A", "E", "F", "G"], &[(0, "A"), (1, "B")], 0, 2), (o(&[(1, "E")]), 2));
+        assert_eq!(plan(&["A", "B", "C"], &[(0, "A"), (1, "B")], 0, 2), (vec![], 1));
+        // slots without a live pane are neither kept nor filled
+        assert_eq!(plan(&["A", "E"], &[(0, "B"), (2, "C")], 0, 3), (o(&[(0, "A"), (2, "E")]), 0));
+        // a folder named like a session file is just a folder here
+        assert_eq!(plan(&["D:\\Backup.grids"], &[(0, "A")], 0, 1), (o(&[(0, "D:\\Backup.grids")]), 0));
+        assert_eq!(plan(&[], &[(0, "A")], 0, 1), (vec![], 0));
+    }
+
+    #[test]
     fn neighbours() {
         let r = |left, top, right, bottom| RECT { left, top, right, bottom };
         // 2×2 with an 8px gap: slots run down each column

@@ -68,6 +68,7 @@ The exe is not code-signed, so Windows SmartScreen may warn the first time: choo
 | Ctrl+/ | Keyboard shortcuts (this list) |
 | Ctrl+Shift+M | Maximize / restore the active pane (or double-click its header) |
 | Ctrl+Shift+E | Hide / show the folder tree (also View menu → Folder tree; its width is kept) |
+| Ctrl+Shift+O | Open the folders of open Explorer windows and tabs in panes, from the active pane on (also View menu; panes already showing one of them stay put) |
 | Ctrl+Shift+C | Copy the full path of the selected items (or of the current folder) |
 | Num+ / Ctrl+Shift+A | Select files by pattern (`*.jpg;*.png` or part of a name; Shift+Enter deselects) |
 | Num− | Deselect files by pattern |

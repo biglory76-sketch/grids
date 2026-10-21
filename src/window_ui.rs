@@ -170,6 +170,7 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 id @ ID_ACCENT..=1405 => set_accent(pal().accents[id - ID_ACCENT].1),
                 ID_ACCENT_PICK => pick_accent(),
                 ID_KEYS => open_keys(),
+                ID_GATHER => gather_explorer(),
                 _ => {}
             },
             WM_INITMENUPOPUP => {
@@ -548,6 +549,7 @@ pub(crate) unsafe fn make_menus() -> Result<HMENU> {
     let item = |menu: HMENU, flags: MENU_ITEM_FLAGS, id: usize, text: &str| AppendMenuW(menu, flags, id, &HSTRING::from(text));
     item(view, MF_STRING, ID_TREE, tr("Folder tree\tCtrl+Shift+E", "폴더 트리\tCtrl+Shift+E"))?;
     item(view, MF_STRING, ID_HIDDEN, tr("Show hidden files\tCtrl+H", "숨김 파일 표시\tCtrl+H"))?;
+    item(view, MF_STRING, ID_GATHER, tr("Open folders from Explorer windows\tCtrl+Shift+O", "탐색기 창의 폴더 가져오기\tCtrl+Shift+O"))?;
     item(view, MF_STRING, ID_EXT, tr("Show file name extensions", "파일 확장명 표시"))?;
     item(view, MF_STRING, ID_DBLUP, tr("Double-click empty space: parent folder", "빈 곳 더블클릭: 위 폴더로"))?;
     item(view, MF_STRING, ID_HOTKEY, tr("Bring Grids to front from anywhere\tWin+Alt+E", "어디서나 Grids 불러오기\tWin+Alt+E"))?;

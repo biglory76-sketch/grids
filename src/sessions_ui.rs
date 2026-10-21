@@ -126,6 +126,95 @@ pub(crate) unsafe fn open_args(args: Vec<String>) {
     focus_view(a);
 }
 
+// Explorer folders not shown yet, paired with the panes that don't hold one of them, from the active pane on.
+// Each folder already open reserves one live pane showing it; open = (slot, folder) of the live panes.
+// Returns (slot, folder) to open and how many new folders found no pane.
+pub(crate) fn gather_plan(found: &[String], open: &[(usize, String)], active: usize, n: usize) -> (Vec<(usize, String)>, usize) {
+    let key = |p: &str| p.trim_end_matches('\\').to_lowercase();
+    let (mut seen, mut new, mut kept) = (Vec::new(), Vec::new(), vec![false; open.len()]);
+    for f in found {
+        let k = key(f);
+        if seen.contains(&k) {
+            continue;
+        }
+        match (0..open.len()).find(|&j| !kept[j] && key(&open[j].1) == k) {
+            Some(j) => kept[j] = true,
+            None => new.push(f.clone()),
+        }
+        seen.push(k);
+    }
+    let free: Vec<usize> = (0..n).map(|k| (active + k) % n).filter(|&s| (0..open.len()).any(|j| open[j].0 == s && !kept[j])).collect();
+    let short = new.len().saturating_sub(free.len());
+    (free.into_iter().zip(new).collect(), short)
+}
+
+// File system folders of the open Explorer windows; Windows 11 tabs are listed one by one.
+// Home, This PC, Control Panel and windows that don't answer are skipped.
+unsafe fn explorer_folders() -> Vec<String> {
+    let Ok(wins) = CoCreateInstance::<_, IShellWindows>(&ShellWindows, None, CLSCTX_ALL) else { return Vec::new() };
+    let folder = |d: IDispatch| -> Result<String> {
+        let sb: IShellBrowser = d.cast::<IServiceProvider>()?.QueryService(&SID_STopLevelBrowser)?;
+        let it = sb.QueryActiveShellView()?.cast::<IFolderView>()?.GetFolder::<IShellItem>()?;
+        Ok(pwstr(it.GetDisplayName(SIGDN_FILESYSPATH)?))
+    };
+    (0..wins.Count().unwrap_or(0)).filter_map(|i| folder(wins.Item(&VARIANT::from(i)).ok()?).ok()).collect()
+}
+
+static GATHERING: AtomicBool = AtomicBool::new(false);
+
+// Ctrl+Shift+O: folders open in Explorer come into the panes that don't already show one of them.
+pub(crate) unsafe fn gather_explorer() {
+    if GATHERING.swap(true, Ordering::Relaxed) {
+        return;
+    }
+    let found = explorer_folders(); // calls into explorer.exe pump messages, so this stays outside app()
+    let (active, n, open) = app(|a| {
+        let n = a.s.panes();
+        (a.s.active, n, (0..n).filter(|&i| a.panes[i].is_some()).map(|i| (i, a.s.paths[i].clone())).collect::<Vec<_>>())
+    });
+    let (plan, short) = gather_plan(&found, &open, active, n);
+    let ko = KO.load(Ordering::Relaxed);
+    let mut parts = Vec::new();
+    let mut failed = 0;
+    if !plan.is_empty() {
+        if app(|x| x.zoom.take()).is_some() {
+            relayout();
+            redraw_all();
+        }
+        let ok: Vec<String> = plan.iter().filter(|(i, p)| navigate(*i, p)).map(|(i, _)| (i + 1).to_string()).collect();
+        failed = plan.len() - ok.len();
+        focus_view(active);
+        if !ok.is_empty() {
+            let (k, s) = (ok.len(), if ok.len() == 1 { "" } else { "s" });
+            parts.push(match ko {
+                true => format!("탐색기 폴더 {k}개 열기 요청 → 패널 {}", ok.join(", ")),
+                false => format!("Opening {k} Explorer folder{s} in pane{s} {}", ok.join(", ")),
+            });
+        }
+        if failed > 0 {
+            parts.push(if ko { format!("{failed}개 실패") } else { format!("{failed} failed") });
+        }
+    }
+    if short > 0 {
+        parts.push(if ko { format!("패널이 모자라 {short}개 안 엶") } else { format!("{short} not opened (not enough panes)") });
+    }
+    if parts.is_empty() {
+        parts.push(tr(
+            if found.is_empty() { "No Explorer folders to bring in" } else { "Already open in panes" },
+            if found.is_empty() { "가져올 탐색기 폴더가 없습니다" } else { "이미 모두 패널에 열려 있습니다" },
+        ).into());
+    }
+    if plan.is_empty() || failed + short > 0 {
+        _ = MessageBeep(MB_ICONWARNING);
+    }
+    app(|x| {
+        x.note = Some((parts.join(" · "), Instant::now() + Duration::from_secs(3)));
+        x.lost = 0;
+    });
+    update_status();
+    GATHERING.store(false, Ordering::Relaxed);
+}
+
 // Window of a running copy of this same exe. Portable copies elsewhere have their own ini and stay separate.
 pub(crate) unsafe fn running_instance() -> Option<HWND> {
     let me = std::env::current_exe().ok()?.to_string_lossy().to_lowercase();

@@ -66,6 +66,7 @@ pub(crate) unsafe fn key(m: &MSG) -> bool {
         }
         VK_M if ctrl && shift && !alt => toggle_zoom(),
         VK_E if ctrl && shift && !alt => toggle_tree(),
+        VK_O if ctrl && shift && !alt => gather_explorer(),
         VK_F1 => open_help(),
         VK_RETURN if addr => go_edit(a),
         VK_RETURN if filt => {
