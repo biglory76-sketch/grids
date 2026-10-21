@@ -1656,6 +1656,15 @@ mod tests {
         // swapping back is no move at all
         swap_in(&mut cur, None, 2, 0);
         assert!(cur.order.is_empty() && cur.paths == s.paths);
+        // a layout change's permutation moves the same things; done twice, nothing moved
+        let mut perm: [usize; MAXP] = std::array::from_fn(|k| k);
+        perm.swap(0, 2);
+        let (mut a, mut b) = (s.clone(), s.clone());
+        swap_in(&mut a, None, 0, 2);
+        permute_in(&mut b, None, &perm);
+        assert_eq!(a, b);
+        permute_in(&mut b, None, &perm);
+        assert_eq!(b, s);
     }
 
     #[test]

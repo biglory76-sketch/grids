@@ -760,6 +760,13 @@ pub(crate) unsafe fn on_nav(i: usize, pidl: *const ITEMIDLIST) {
             sync_tree(&item);
         }
     }
+    // set_layout's focus for a pane made in place of the active one: once, and only if focus went nowhere else since
+    if app(|a| a.focus_req == h && a.s.active == i && std::mem::take(&mut a.focus_req) == h) {
+        let f = GetFocus();
+        if f.0.is_null() || f == app(|a| a.main) {
+            focus_view(i);
+        }
+    }
 }
 
 // ---------- address bar folder icon ----------

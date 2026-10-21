@@ -108,6 +108,39 @@ pub(crate) fn slot(h: &[usize], mut i: usize) -> (usize, usize) {
     (h.len() - 1, h[h.len() - 1] - 1)
 }
 
+/// (column, row) of each slot off screen: the cell its pane last had (runtime only, never saved).
+pub(crate) type Homes = [Option<(usize, usize)>; MAXP];
+
+/// Layout `old` -> `new`, like Q-Dir's layout switch or a tmux/VS Code split: new slot j shows the pane of old slot
+/// perm[j]. A pane whose cell is in both stays there; one whose cell goes keeps it as its home and comes back when
+/// that cell does; new cells take the lowest slots without a home. Hidden homes stay apart and off the grid.
+pub(crate) fn remap(old: &[usize], new: &[usize], home: &Homes) -> ([usize; MAXP], Homes) {
+    let has = |(c, r): (usize, usize)| new.get(c).is_some_and(|&n| r < n);
+    let (on, n) = (old.iter().sum::<usize>(), new.iter().sum::<usize>());
+    let mut home = *home;
+    let mut perm = [usize::MAX; MAXP];
+    for j in 0..MAXP {
+        let Some(c) = (if j < on { Some(slot(old, j)) } else { home[j] }) else { continue };
+        if has(c) {
+            perm[new[..c.0].iter().sum::<usize>() + c.1] = j;
+            home[j] = None;
+        } else {
+            home[j] = Some(c);
+        }
+    }
+    let free: Vec<usize> = (0..MAXP).filter(|j| !perm.contains(j) && home[*j].is_none()).collect();
+    let empty: Vec<usize> = (0..n).filter(|&k| perm[k] == usize::MAX).collect();
+    for (k, j) in empty.into_iter().zip(free) {
+        perm[k] = j;
+    }
+    let rest: Vec<usize> = (0..MAXP).filter(|j| !perm[..n].contains(j)).collect();
+    let mut out = [None; MAXP];
+    for (k, j) in (n..MAXP).zip(rest) {
+        (perm[k], out[k]) = (j, home[j]);
+    }
+    (perm, out)
+}
+
 pub(crate) fn cell_rect(g: &Geo, h: &[usize], i: usize) -> RECT {
     let (c, r) = slot(h, i);
     let ((x0, x1), (y0, y1)) = (g.xs[c], g.ys[c][r]);
@@ -237,5 +270,61 @@ mod tests {
         assert_eq!(gap_line(&one, Hit::Side, 2), None);
         assert_eq!(gap_line(&two(true, true), Hit::Col(0), 2), None);
         assert_eq!(gap_line(&two(true, true), Hit::Row(0, 0), 2), None);
+    }
+
+    #[test]
+    fn remap_keeps_cells() {
+        let ident: [usize; MAXP] = std::array::from_fn(|k| k);
+        // which original pane each slot shows after going through the layouts
+        let run = |steps: &[Vec<usize>]| {
+            let (mut id, mut home) = (ident, [None; MAXP]);
+            for w in steps.windows(2) {
+                let (p, h) = remap(&w[0], &w[1], &home);
+                (id, home) = (p.map(|k| id[k]), h);
+            }
+            id
+        };
+        let tail = |v: &[usize]| v.iter().copied().chain(v.len()..MAXP).collect::<Vec<_>>();
+        assert_eq!(run(&[vec![2, 2], vec![3, 2]])[..], tail(&[0, 1, 4, 2, 3])[..]);
+        assert_eq!(run(&[vec![1, 1, 1, 1], vec![4]])[..], tail(&[0, 4, 5, 6, 1, 2, 3])[..]);
+        for steps in [
+            vec![vec![1, 1, 1, 1], vec![4], vec![1, 1, 1, 1]],
+            vec![vec![3, 3], vec![2, 2], vec![2, 3], vec![3, 3]],
+            vec![vec![3, 2], vec![2, 3], vec![3, 2]],
+            vec![vec![2, 2], vec![2, 2]],
+        ] {
+            assert_eq!(run(&steps), ident, "{steps:?}");
+        }
+        // random switches: always a permutation, cells in both layouts keep their pane, homes come back
+        let (mut seed, mut cur, mut id, mut home) = (7u32, vec![2, 2], ident, [None; MAXP]);
+        let mut rnd = |n: u32| {
+            seed = seed.wrapping_mul(1103515245).wrapping_add(12345);
+            (seed >> 16) as usize % n as usize
+        };
+        for _ in 0..3000 {
+            let new: Vec<usize> = (0..rnd(4) + 1).map(|_| rnd(4) + 1).collect();
+            let (p, h) = remap(&cur, &new, &home);
+            let mut sorted = p;
+            sorted.sort();
+            assert_eq!(sorted, ident, "{cur:?} -> {new:?}");
+            let nid = p.map(|k| id[k]);
+            let idx = |l: &[usize], (c, r): (usize, usize)| (c < l.len() && r < l[c]).then(|| l[..c].iter().sum::<usize>() + r);
+            let (on, n) = (cur.iter().sum::<usize>(), new.iter().sum::<usize>());
+            assert!(h[..n].iter().all(Option::is_none));
+            let hidden: Vec<_> = h[n..].iter().flatten().collect();
+            assert!(hidden.iter().all(|&&c| idx(&new, c).is_none()));
+            assert!(hidden.iter().enumerate().all(|(a, x)| !hidden[a + 1..].contains(x)));
+            for j in 0..on {
+                if let Some(k) = idx(&new, slot(&cur, j)) {
+                    assert_eq!(nid[k], id[j]);
+                }
+            }
+            for j in on..MAXP {
+                if let Some(k) = home[j].and_then(|c| idx(&new, c)) {
+                    assert_eq!(nid[k], id[j]);
+                }
+            }
+            (cur, id, home) = (new, nid, h);
+        }
     }
 }

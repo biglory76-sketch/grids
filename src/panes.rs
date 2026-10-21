@@ -55,6 +55,9 @@ pub(crate) unsafe fn destroy_pane(i: usize) {
         if p.as_ref().is_some_and(|p| p.hwnd == a.drop_hover) {
             a.drop_hover = HWND::default();
         }
+        if p.as_ref().is_some_and(|p| p.hwnd == a.focus_req) {
+            a.focus_req = HWND::default();
+        }
         let queued = if a.drop_open.as_ref().is_some_and(|d| d.1 == i) { a.drop_open.take() } else { None };
         (p, queued)
     });
@@ -241,6 +244,9 @@ pub(crate) unsafe fn redraw_all() {
 pub(crate) unsafe fn set_active(i: usize) {
     let (old, hs) = app(|a| {
         let old = std::mem::replace(&mut a.s.active, i);
+        if old != i {
+            a.focus_req = HWND::default();
+        }
         (old, [old, i].map(|k| a.panes[k].as_ref().map(|p| p.hwnd)))
     });
     if old != i {
@@ -808,13 +814,77 @@ pub(crate) fn kept_side(tree: bool, stored: i32, clamped: i32) -> i32 {
     if tree { clamped } else { stored }
 }
 
+// Panes keep their place on screen (remap); like swap_panes, everything kept by slot moves with them.
 pub(crate) unsafe fn set_layout(h: Vec<usize>) {
-    app(|a| {
-        a.zoom = None;
-        a.s.set_heights(h);
+    app(|a| a.focus_req = HWND::default());
+    for i in 0..MAXP {
+        save_view(i);
+    }
+    let (perm, slots) = app(|a| {
+        let (perm, home) = remap(&a.s.heights, &h, &a.home);
+        a.home = home;
+        (perm, perm.map(|k| a.panes[k].as_ref().map(|p| p.slot.clone())))
     });
+    {
+        // filters and slots together, as in swap_panes
+        let mut f = FILTERS.lock().unwrap_or_else(|e| e.into_inner());
+        let old = f.clone();
+        for (j, &k) in perm.iter().enumerate() {
+            f[j] = old[k].clone();
+            if let Some(s) = &slots[j] {
+                s.store(j, Ordering::SeqCst);
+            }
+        }
+    }
+    let revs = SEL_REV.each_ref().map(|r| r.load(Ordering::Relaxed));
+    for (j, &k) in perm.iter().enumerate() {
+        SEL_REV[j].store(revs[k], Ordering::Relaxed);
+    }
+    let gone = app(|a| {
+        let (old_h, old_active) = (a.s.heights.clone(), a.s.active);
+        let mut taken: Vec<Option<Pane>> = a.panes.iter_mut().map(Option::take).collect();
+        a.panes = perm.iter().map(|&k| taken[k].take()).collect();
+        permute_in(&mut a.s, a.base.as_mut(), &perm);
+        let to = |k: &mut usize| *k = perm.iter().position(|&p| p == *k).unwrap_or(*k);
+        if let Some(d) = a.drop_open.as_mut() {
+            to(&mut d.1);
+        }
+        if let Some(m) = a.matcher.as_mut() {
+            to(&mut m.pane);
+        }
+        if let Some(k) = a.kids.as_mut() {
+            to(&mut k.i);
+        }
+        to(&mut a.peek_pane);
+        a.zoom = None;
+        a.status_key.clear();
+        let n: usize = h.iter().sum();
+        let gone = a.s.active >= n;
+        if gone {
+            // the active pane's cell went: the nearest cell left takes over
+            let (c, r) = slot(&old_h, old_active);
+            let c = c.min(h.len() - 1);
+            a.s.active = h[..c].iter().sum::<usize>() + r.min(h[c] - 1);
+        }
+        a.s.set_heights(h);
+        gone
+    });
+    NAV_GEN.fetch_add(1, Ordering::SeqCst); // a double-click pair that spans the move is dropped
     relayout();
     redraw_all();
+    if gone {
+        let i = app(|a| a.s.active);
+        if view_of::<IShellView>(i).is_some() {
+            if let Some(item) = view_of::<IFolderView2>(i).and_then(|fv| fv.GetFolder::<IShellItem>().ok()) {
+                sync_tree(&item);
+            }
+            focus_view(i);
+        } else {
+            // a pane made just now for that cell: on_nav focuses it once its folder shows
+            app(|a| a.focus_req = a.panes[i].as_ref().map(|p| p.hwnd).unwrap_or_default());
+        }
+        mark_drive();
+    }
 }
 
 // Same switches as Explorer's View > Show "Hidden items" and "File name extensions"

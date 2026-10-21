@@ -101,7 +101,7 @@ pub(crate) unsafe fn load_session_file(path: &Path) {
     let other = Session::parse(&text);
     app(|a| {
         a.s.take_layout(&other);
-        a.zoom = None;
+        (a.zoom, a.home, a.focus_req) = (None, [None; MAXP], HWND::default());
         a.s.file = path.to_string_lossy().into_owned();
         (a.base, a.dirty) = (Some(a.s.clone()), false);
     });

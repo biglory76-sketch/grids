@@ -64,6 +64,8 @@ pub(crate) struct App {
     pub(crate) grid_preset: Option<usize>,    // preset tile under the mouse
     pub(crate) grid_closed: Option<Instant>,
     pub(crate) zoom: Option<usize>, // pane maximized over the grid (runtime only, never saved)
+    pub(crate) home: Homes,         // cell each off-screen slot's pane last had, for when it comes back (runtime only)
+    pub(crate) focus_req: HWND,     // pane to focus once its folder shows (set_layout gave it the active pane's place)
     pub(crate) note: Option<(String, Instant)>, // status line confirmation and when it goes (runtime only)
     pub(crate) lost: usize,                     // missing folders the shown note counts (gone_note)
     pub(crate) drop_hover: HWND,                         // pane whose top bar something openable is being dragged over
@@ -144,6 +146,8 @@ thread_local! {
         grid_preset: None,
         grid_closed: None,
         zoom: None,
+        home: [None; MAXP],
+        focus_req: HWND::default(),
         note: None,
         lost: 0,
         drop_hover: HWND::default(),

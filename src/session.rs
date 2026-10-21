@@ -270,6 +270,23 @@ pub(crate) fn swap_in(cur: &mut Session, base: Option<&mut Session>, i: usize, j
     }
 }
 
+/// A layout change moved panes (slot j now shows what slot perm[j] held): as swap_in, for any permutation.
+pub(crate) fn permute_in(cur: &mut Session, base: Option<&mut Session>, perm: &[usize; MAXP]) {
+    let p = perm.map(|k| k as u8);
+    for s in std::iter::once(&mut *cur).chain(base) {
+        let act = s.active;
+        s.reorder(&p);
+        s.active = perm.iter().position(|&k| k == act).unwrap_or(0);
+    }
+    if cur.order.is_empty() {
+        cur.order = (0..MAXP as u8).collect();
+    }
+    cur.order = p.iter().map(|&k| cur.order[k as usize]).collect();
+    if !moved(&cur.order) {
+        cur.order.clear();
+    }
+}
+
 fn moved(order: &[u8]) -> bool {
     order.iter().enumerate().any(|(k, &o)| k != o as usize)
 }
