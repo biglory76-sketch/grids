@@ -8,12 +8,12 @@ use std::fmt::Display;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Condvar, Mutex, Once};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use windows::core::*;
 use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_CAPTION_COLOR, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DONOTROUND, DWMWINDOWATTRIBUTE};
 use windows::Win32::Graphics::Gdi::*;
-use windows::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
+use windows::Win32::Storage::FileSystem::{GetDiskFreeSpaceExW, GetDriveTypeW};
 use windows::Win32::System::Com::*;
 use windows::Win32::System::DataExchange::{CloseClipboard, EmptyClipboard, GetClipboardData, OpenClipboard, RegisterClipboardFormatW, SetClipboardData};
 use windows::Win32::System::Diagnostics::Debug::MessageBeep;
@@ -783,6 +783,7 @@ struct Pane {
     disp: String,
     pending: Option<String>, // columns to put on when the next folder shows (session restore, open in)
     settle: Option<(String, u8)>, // columns just put on, and passes left to hold narrow widths (TIMER_SETTLE)
+    recover: Option<(String, String)>, // missing folder, parent being opened instead (go_near)
 }
 
 struct App {
@@ -826,7 +827,8 @@ struct App {
     grid_preset: Option<usize>,    // preset tile under the mouse
     grid_closed: Option<Instant>,
     zoom: Option<usize>, // pane maximized over the grid (runtime only, never saved)
-    note: Option<(String, Instant)>, // status line confirmation and when it was set (runtime only)
+    note: Option<(String, Instant)>, // status line confirmation and when it goes (runtime only)
+    lost: usize,                     // missing folders the shown note counts (gone_note)
     drop_hover: HWND,                         // pane whose top bar something openable is being dragged over
     drop_open: Option<(HWND, usize, IShellItem)>, // folder dropped on a top bar, opened by WM_DROP_OPEN
     crumb_hot: Option<(HWND, usize)>,             // address bar crumb under the mouse (pane, crumb_layout index)
@@ -887,6 +889,7 @@ thread_local! {
         grid_closed: None,
         zoom: None,
         note: None,
+        lost: 0,
         drop_hover: HWND::default(),
         drop_open: None,
         crumb_hot: None,
@@ -1336,14 +1339,121 @@ unsafe fn name(pidl: *const ITEMIDLIST, kind: SIGDN) -> String {
 // ---------- navigation ----------
 
 unsafe fn navigate(i: usize, path: &str) -> bool {
-    let Some(eb) = eb_of(i) else { return false };
+    try_nav(i, path).is_ok()
+}
+
+unsafe fn try_nav(i: usize, path: &str) -> Result<()> {
+    let eb = eb_of(i).ok_or_else(|| Error::from(E_FAIL))?;
     let mut pidl = std::ptr::null_mut();
-    if SHParseDisplayName(&HSTRING::from(path), None, &mut pidl, 0, None).is_err() {
+    SHParseDisplayName(&HSTRING::from(path), None, &mut pidl, 0, None)?;
+    let r = eb.BrowseToIDList(pidl, SBSP_ABSOLUTE);
+    CoTaskMemFree(Some(pidl as _));
+    r
+}
+
+// The shell's answer for a path that isn't there; denied, offline or not ready are something else.
+fn gone(code: HRESULT) -> bool {
+    code == HRESULT::from_win32(ERROR_FILE_NOT_FOUND.0) || code == HRESULT::from_win32(ERROR_PATH_NOT_FOUND.0)
+}
+
+// Nearest folder above `path` that still exists. Stops at anything but "not found" (denied, a file).
+fn near_dir(path: &str, probe: impl Fn(&Path) -> std::io::Result<bool>) -> Option<String> {
+    for p in Path::new(path).ancestors().skip(1) {
+        match probe(p) {
+            Ok(true) => return Some(p.display().to_string()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            _ => return None,
+        }
+    }
+    None
+}
+
+#[derive(Clone, Copy)]
+enum Nav {
+    Pending,
+    Complete,
+    Failed,
+}
+
+// A pane's recovery (missing folder, parent being opened) through its navigation events. Returns the missing
+// folder once the parent has opened; another navigation starting, or the parent failing, drops it quietly.
+fn rec_step(rec: &mut Option<(String, String)>, ev: Nav, path: &str) -> Option<String> {
+    let hit = rec.as_ref().is_some_and(|(_, t)| t.eq_ignore_ascii_case(path));
+    match ev {
+        Nav::Pending if !hit => *rec = None,
+        Nav::Failed if hit => *rec = None,
+        Nav::Complete => return rec.take().filter(|_| hit).map(|(m, _)| m),
+        _ => {}
+    }
+    None
+}
+
+// Like Total Commander / XYplorer: a local folder that no longer exists opens its nearest existing parent,
+// and the status line says so once that has opened (on_nav). Anything else fails as navigate() does.
+// ponytail: local drives only, so the parent probe never blocks; shares would need a worker thread.
+unsafe fn go_near(i: usize, path: &str) -> bool {
+    let Err(e) = try_nav(i, path) else { return true };
+    if !gone(e.code()) {
         return false;
     }
+    // a confirmed missing folder leaves the recent list, and the pane's move away doesn't put it back (visit)
+    app(|a| {
+        a.s.recent.retain(|r| !r.eq_ignore_ascii_case(path));
+        if a.s.paths[i].eq_ignore_ascii_case(path) {
+            a.s.paths[i].clear();
+        }
+    });
+    let local = path.get(1..3) == Some(":\\") && matches!(GetDriveTypeW(&HSTRING::from(&path[..3])), 2 | 3); // DRIVE_REMOVABLE, DRIVE_FIXED
+    if !local {
+        return false;
+    }
+    let Some(up) = near_dir(path, |p| std::fs::metadata(p).map(|m| m.is_dir())) else { return false };
+    let Some(eb) = eb_of(i) else { return false };
+    let mut pidl = std::ptr::null_mut();
+    if SHParseDisplayName(&HSTRING::from(up.as_str()), None, &mut pidl, 0, None).is_err() {
+        return false;
+    }
+    let target = name(pidl, SIGDN_DESKTOPABSOLUTEPARSING);
+    // set before browsing: a pane's first navigation completes inside BrowseToIDList
+    let rec = |set: bool| {
+        app(|a| {
+            if let Some(p) = a.panes[i].as_mut() {
+                if set {
+                    p.recover = Some((path.to_string(), target.clone()));
+                } else if p.recover.as_ref().is_some_and(|(_, t)| *t == target) {
+                    p.recover = None;
+                }
+            }
+        })
+    };
+    rec(true);
     let ok = eb.BrowseToIDList(pidl, SBSP_ABSOLUTE).is_ok();
+    if !ok {
+        rec(false);
+    }
     CoTaskMemFree(Some(pidl as _));
     ok
+}
+
+// "Not found: … · opened …" for 8 s; more recoveries while it shows merge into one count.
+fn gone_note(a: &mut App, missing: &str, opened: &str) {
+    let live = a.lost > 0 && a.note.as_ref().is_some_and(|(_, t)| Instant::now() < *t);
+    a.lost = if live { a.lost + 1 } else { 1 };
+    let text = match (KO.load(Ordering::Relaxed), a.lost) {
+        (false, 1) => format!("Not found: {missing} · opened {opened}"),
+        (true, 1) => format!("없는 폴더: {missing} · {opened} 엶"),
+        (false, n) => format!("{n} saved folders were missing · opened the nearest parent folders"),
+        (true, n) => format!("저장된 폴더 {n}개가 없어 가장 가까운 상위 폴더를 엶"),
+    };
+    a.note = Some((text, Instant::now() + Duration::from_secs(8)));
+}
+
+// Pending / Failed events of a pane with a recovery waiting; Complete goes through on_nav.
+unsafe fn rec_event(i: usize, ev: Nav, pidl: *const ITEMIDLIST) {
+    if app(|a| a.panes[i].as_ref().is_some_and(|p| p.recover.is_some())) {
+        let path = name(pidl, SIGDN_DESKTOPABSOLUTEPARSING);
+        app(|a| a.panes[i].as_mut().map(|p| rec_step(&mut p.recover, ev, &path)));
+    }
 }
 
 unsafe fn browse(i: usize, flags: u32) {
@@ -1571,7 +1681,7 @@ unsafe fn recent_menu(i: usize) {
     }
     let pick = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_LEFTALIGN | TPM_TOPALIGN, rc.left, rc.bottom, None, h, None).0;
     _ = DestroyMenu(menu);
-    if pick > 0 && !navigate(i, &items[pick as usize - 1]) {
+    if pick > 0 && !go_near(i, &items[pick as usize - 1]) {
         _ = MessageBeep(MB_ICONWARNING); // gone or unreachable
     }
     focus_view(i);
@@ -1810,6 +1920,9 @@ unsafe fn on_nav(i: usize, pidl: *const ITEMIDLIST) {
         let fs = is_fs(&parse);
         let old = std::mem::replace(&mut a.s.paths[i], parse.clone());
         visit(&mut a.s.recent, &old, &a.s.paths[i]);
+        if let Some(m) = a.panes[i].as_mut().and_then(|p| rec_step(&mut p.recover, Nav::Complete, &parse)) {
+            gone_note(a, &m, &disp); // update_status shows it
+        }
         let (v, own) = (a.s.views[i], a.s.cols[i].clone());
         a.panes[i].as_mut().map(|p| {
             p.disp = disp.clone();
@@ -1861,9 +1974,12 @@ unsafe fn on_nav(i: usize, pidl: *const ITEMIDLIST) {
 struct Events(usize);
 
 impl IExplorerBrowserEvents_Impl for Events_Impl {
-    fn OnNavigationPending(&self, _: *const ITEMIDLIST) -> Result<()> {
+    fn OnNavigationPending(&self, pidl: *const ITEMIDLIST) -> Result<()> {
         NAV_GEN.fetch_add(1, Ordering::SeqCst);
-        unsafe { save_view(self.0) };
+        unsafe {
+            rec_event(self.0, Nav::Pending, pidl);
+            save_view(self.0)
+        };
         Ok(())
     }
     fn OnViewCreated(&self, _: Ref<IShellView>) -> Result<()> {
@@ -1874,8 +1990,9 @@ impl IExplorerBrowserEvents_Impl for Events_Impl {
         unsafe { on_nav(self.0, pidl) };
         Ok(())
     }
-    fn OnNavigationFailed(&self, _: *const ITEMIDLIST) -> Result<()> {
+    fn OnNavigationFailed(&self, pidl: *const ITEMIDLIST) -> Result<()> {
         NAV_GEN.fetch_add(1, Ordering::SeqCst);
+        unsafe { rec_event(self.0, Nav::Failed, pidl) };
         Ok(())
     }
 }
@@ -2170,7 +2287,7 @@ unsafe fn create_pane(i: usize) -> Result<Pane> {
     let dt: IDropTarget = PaneDrop { slot: i, hwnd: h, ok: Cell::new(false), helper }.into();
     _ = RegisterDragDrop(h, &dt);
     let pending = Some(app(|a| a.s.cols[i].clone())); // the session's, for the first folder
-    Ok(Pane { hwnd: h, eb, cookie, disp: String::new(), pending, settle: None })
+    Ok(Pane { hwnd: h, eb, cookie, disp: String::new(), pending, settle: None, recover: None })
 }
 
 unsafe fn destroy_pane(i: usize) {
@@ -2209,7 +2326,7 @@ unsafe fn sync_panes() {
             let Ok(p) = create_pane(i) else { continue };
             app(|a| a.panes[i] = Some(p));
             let path = app(|a| a.s.paths[i].clone());
-            if path.is_empty() || !navigate(i, &path) {
+            if path.is_empty() || !go_near(i, &path) {
                 navigate(i, THIS_PC);
             }
         } else if i >= n && has {
@@ -2960,7 +3077,7 @@ unsafe fn open_args(args: Vec<String>) {
     }
     let (a, n) = app(|x| (x.s.active, x.s.panes()));
     for (k, p) in args.iter().take(n).enumerate() {
-        navigate((a + k) % n, p);
+        go_near((a + k) % n, p);
     }
     focus_view(a);
 }
@@ -3217,8 +3334,11 @@ unsafe fn update_status() {
     let Some(rc) = app(|a| {
         let (head, size, tail) = &a.status_base;
         let size = size.map(|(f, d, p)| size_text(ko, f, d, job, p)).unwrap_or_default();
-        // a short confirmation (path copied) leads for 3 s: the line's end gets cut when it's too long
-        a.note = a.note.take().filter(|(_, t)| t.elapsed().as_secs() < 3);
+        // a short confirmation (path copied, missing folder) leads for a few seconds: the line's end gets cut when it's too long
+        a.note = a.note.take().filter(|(_, t)| Instant::now() < *t);
+        if a.note.is_none() {
+            a.lost = 0;
+        }
         let note = a.note.as_ref().map(|(s, _)| format!("{s}     ·     ")).unwrap_or_default();
         let status = format!("{note}{head}{size}{tail}");
         (a.status != status).then(|| {
@@ -4006,7 +4126,7 @@ extern "system" fn fav_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESUL
                 let open = |k: usize| {
                     let (i, path) = app(|a| (a.s.active, a.s.favs[k].clone()));
                     _ = DestroyWindow(h);
-                    if !navigate(i, &path) {
+                    if !go_near(i, &path) {
                         _ = MessageBeep(MB_ICONWARNING); // gone or unreachable
                     }
                     focus_view(i);
@@ -4443,7 +4563,10 @@ unsafe fn copy_paths(a: usize) {
         (false, 1) => "Copied path".into(),
         (false, n) => format!("Copied {n} paths"),
     };
-    app(|x| x.note = Some((note, Instant::now())));
+    app(|x| {
+        x.note = Some((note, Instant::now() + Duration::from_secs(3)));
+        x.lost = 0;
+    });
     update_status();
 }
 
@@ -5753,6 +5876,40 @@ mod tests {
             p.num.right > p.num.left
         };
         assert!(!shown(240, 96) && shown(241, 96) && !shown(361, 144) && shown(362, 144));
+    }
+
+    #[test]
+    fn missing_folders() {
+        assert!(gone(HRESULT::from_win32(2)) && gone(HRESULT::from_win32(3)));
+        for c in [E_ACCESSDENIED, HRESULT(0x80070035u32 as i32), HRESULT(0x80070015u32 as i32)] {
+            assert!(!gone(c)); // denied, bad network path, not ready
+        }
+        use std::io::{Error as E, ErrorKind as K};
+        let only_a = |p: &Path| if p == Path::new(r"C:\a") { Ok(true) } else { Err(E::from(K::NotFound)) };
+        assert_eq!(near_dir(r"C:\a\b\c", only_a).as_deref(), Some(r"C:\a"));
+        let denied = |p: &Path| if p == Path::new(r"C:\a\b") { Err(E::from(K::PermissionDenied)) } else { Ok(true) };
+        assert_eq!(near_dir(r"C:\a\b\c", denied), None);
+        assert_eq!(near_dir(r"C:\a\b\c", |_| Err(E::from(K::NotFound))), None);
+        assert_eq!(near_dir(r"C:\a\b\c", |_| Ok(false)), None); // a file in the way
+
+        let (m, t) = (r"C:\a\b".to_string(), r"C:\a".to_string());
+        let start = || Some((m.clone(), t.clone()));
+        let mut r = start(); // first navigation, synchronous
+        assert_eq!(rec_step(&mut r, Nav::Pending, &t), None);
+        assert_eq!(rec_step(&mut r, Nav::Complete, r"c:\A"), Some(m.clone())); // case only differs
+        assert!(r.is_none());
+        let mut r = start(); // another navigation took over
+        rec_step(&mut r, Nav::Pending, &t);
+        rec_step(&mut r, Nav::Pending, r"C:\x");
+        assert!(r.is_none() && rec_step(&mut r, Nav::Complete, r"C:\x").is_none());
+        let mut r = start(); // an earlier navigation's failure
+        rec_step(&mut r, Nav::Failed, r"C:\y");
+        assert_eq!(rec_step(&mut r, Nav::Complete, &t), Some(m.clone()));
+        let mut r = start(); // the parent itself failed
+        rec_step(&mut r, Nav::Failed, &t);
+        assert!(r.is_none());
+        let mut r = start(); // some other folder completed
+        assert!(rec_step(&mut r, Nav::Complete, r"C:\x").is_none() && r.is_none());
     }
 
     #[test]

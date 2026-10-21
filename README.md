@@ -19,6 +19,7 @@ Every pane is a real Windows Explorer view, so right-click menus, drag and drop,
 - **Folder tree** that follows the active pane and keeps the current folder's name in view, even in deep folders.
 - **Per-pane toolbar**: address bar, back / forward / up, name filter (`*.pdf;*.txt` or any part of a name), open the selected folder in another pane (its columns come along, so you can set one pane up and copy it around) or copy / move the selected files to another pane's folder (up to 10,000), favourite toggle; drag a folder onto a pane's top bar to open it there.
 - **Sessions**: the layout, folders and each pane's columns (order, widths, sort) are saved automatically. Save named sessions and load them from cards that preview each layout; a green dot on the save button shows unsaved layout changes.
+- **Missing folders**: a local folder from a session, favourite, recent list or the command line that was deleted or renamed opens its nearest existing parent instead, and the status line says which folder was missing (8 s); it also leaves the recent list.
 - **Columns are a pane setting**: their order, widths and sort stay as the pane moves from folder to folder, and any column can be made narrower than Explorer allows (Size stops at 90 px there).
 - **Folder favourites**: star a folder from its pane header, jump to it from the star list in the toolbar.
 - **Folder sizes**: the status line also shows the total size of selected folders, summed in the background (F5 sums again; "partial" when some items couldn't be read).
