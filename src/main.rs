@@ -13,7 +13,7 @@ use windows::core::*;
 use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_CAPTION_COLOR, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DONOTROUND, DWMWINDOWATTRIBUTE};
 use windows::Win32::Graphics::Gdi::*;
-use windows::Win32::Storage::FileSystem::{GetDiskFreeSpaceExW, GetDriveTypeW, GetLogicalDrives, FILE_FLAGS_AND_ATTRIBUTES};
+use windows::Win32::Storage::FileSystem::{GetDiskFreeSpaceExW, GetDriveTypeW, GetLogicalDrives, MoveFileExW, FILE_FLAGS_AND_ATTRIBUTES, MOVE_FILE_FLAGS};
 use windows::Win32::System::Com::*;
 use windows::Win32::System::DataExchange::{CloseClipboard, EmptyClipboard, GetClipboardData, OpenClipboard, RegisterClipboardFormatW, SetClipboardData};
 use windows::Win32::System::Diagnostics::Debug::MessageBeep;
@@ -1222,5 +1222,73 @@ mod tests {
             }
         }
         assert_eq!(fit_saved(r(1500, 900, 2300, 1500), mon, r(0, 40, 1920, 1080)), r(1120, 440, 1920, 1040));
+    }
+
+    #[test]
+    fn session_card_hits() {
+        for dpi in [96, 144] {
+            let g = load_geo(5, dpi);
+            for (k, (card, thumb, del)) in g.cards.iter().enumerate() {
+                assert_eq!(del.right - del.left, 20 * dpi / 96);
+                assert!(del.right == thumb.right && del.top == thumb.top && card.left < del.left);
+                // ✕ wins over the card around it; the rest of the card loads
+                for (x, y) in [(del.left, del.top), (del.right - 1, del.bottom - 1)] {
+                    assert_eq!(load_hit(&g, x, y), Some(LOAD_DEL + k));
+                }
+                for (x, y) in [(del.left - 1, del.top), (del.left, del.bottom), (card.left, card.bottom - 1), (thumb.left + 1, thumb.top + 1)] {
+                    assert_eq!(load_hit(&g, x, y), Some(k));
+                }
+            }
+            assert_eq!(load_hit(&g, g.save_as.left + 1, g.save_as.top + 1), Some(LOAD_SAVE_AS));
+            assert_eq!(load_hit(&g, g.folder.right - 1, g.folder.top + 1), Some(LOAD_FOLDER));
+        }
+    }
+
+    #[test]
+    fn session_names() {
+        assert_eq!(session_stem_ok("  my work "), Some("my work".into()));
+        for ok in ["v1.2", "CONSOLE", "COM10", "lpt", "세션"] {
+            assert_eq!(session_stem_ok(ok).as_deref(), Some(ok));
+        }
+        for bad in ["", "   ", "a/b", r"a\b", "a:b", "a*", "a?", "a\"b", "a<b", "a>b", "a|b", "a\tb", "x.", "CON", "con", "Aux ", "nul.x", "PRN", "COM1", "lpt9"] {
+            assert_eq!(session_stem_ok(bad), None, "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn session_link_after_delete_or_rename() {
+        assert_eq!(file_after_delete("A", "A", true, true), Some(String::new())); // the next Ctrl+S asks for a name
+        assert_eq!(file_after_delete("A", "B", true, true), None); // B opened while A's delete was confirmed: B stays
+        assert_eq!(file_after_delete("A", "B", true, false), None);
+        assert_eq!(file_after_delete("A", "A", true, false), None); // cancelled
+        assert_eq!(file_after_delete("A", "A", false, true), None); // another session deleted
+        assert_eq!(file_after_rename("A", "A", true, "N"), Some("N".into()));
+        assert_eq!(file_after_rename("A", "B", true, "N"), None);
+        assert_eq!(file_after_rename("A", "A", false, "N"), None);
+        assert_eq!(file_after_rename("", "", false, "N"), None);
+    }
+
+    #[test]
+    fn session_rename_never_replaces() {
+        let d = std::env::temp_dir().join(format!("grids-rename-{}", std::process::id()));
+        _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        let read = |n: &str| std::fs::read_to_string(d.join(n)).unwrap();
+        std::fs::write(d.join("a.grids"), "A").unwrap();
+        std::fs::write(d.join("b.grids"), "B").unwrap();
+        assert!(rename_session(&d.join("a.grids"), "b").is_err());
+        assert_eq!((read("a.grids"), read("b.grids")), ("A".into(), "B".into()));
+        // case only
+        assert_eq!(rename_session(&d.join("a.grids"), "A").unwrap(), d.join("A.grids"));
+        let names = || std::fs::read_dir(&d).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect::<Vec<_>>();
+        assert!(names().contains(&"A.grids".into()) && !names().contains(&"a.grids".into()));
+        assert_eq!(read("A.grids"), "A");
+        assert_eq!(rename_session(&d.join("A.grids"), "A").unwrap(), d.join("A.grids"));
+        // sessions from before the rename keep .qdr
+        std::fs::write(d.join("old.qdr"), "Q").unwrap();
+        assert_eq!(rename_session(&d.join("old.qdr"), "new").unwrap(), d.join("new.qdr"));
+        assert!(!d.join("old.qdr").exists());
+        assert_eq!(read("new.qdr"), "Q");
+        _ = std::fs::remove_dir_all(&d);
     }
 }

@@ -171,6 +171,18 @@ pub(crate) unsafe fn pre_translate(m: &MSG) -> bool {
             if eat {
                 return true;
             }
+            // the rename box on a session card: Enter / Esc are its own, the rest is typing (no Ctrl+S, F1 ... behind it)
+            if !m.hwnd.0.is_null() && app(|a| a.load_edit) == m.hwnd {
+                match VIRTUAL_KEY(m.wParam.0 as u16) {
+                    VK_RETURN if m.message == WM_KEYDOWN => {
+                        app(|x| x.held = Some(VK_RETURN.0));
+                        commit_rename();
+                    }
+                    VK_ESCAPE => _ = end_rename(),
+                    _ => return false,
+                }
+                return true;
+            }
             let tree = m.message == WM_KEYDOWN && in_tree();
             // cleared while key() runs, so the selection sync it triggers isn't taken for user input
             let prev = app(|a| std::mem::take(&mut a.tree_input));
