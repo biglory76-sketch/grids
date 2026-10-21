@@ -215,6 +215,7 @@ Ctrl+F\tFilter (*.pdf;*.txt or part of a name; folders always show)\n\
 F6 / Shift+F6\tMove between file list, address bar, filter and folder tree\n\
 Enter / Esc\tApply / cancel the address or filter\n\
 Ctrl+H\tShow hidden files\n\
+F3\tQuick preview of the focused file (arrows: previous / next, Esc: close)\n\
 F1\tHelp (opens the README on GitHub)\n\
 F2, Del, Ctrl+C/X/V, F5\tSame as Explorer\n\n\
 Address bar: click a folder in the path to go there; click the current folder or empty space, or press Ctrl+L, to type a path\n\
@@ -245,6 +246,7 @@ Ctrl+F\t필터 (*.pdf;*.txt 또는 이름 일부, 폴더는 항상 표시)\n\
 F6 / Shift+F6\t파일 목록·주소창·필터·폴더 트리 사이 이동\n\
 Enter / Esc\t주소창·필터 적용 / 취소\n\
 Ctrl+H\t숨김 파일 표시\n\
+F3\t포커스한 파일 빠른 미리보기 (방향키: 이전·다음, Esc: 닫기)\n\
 F1\t도움말 (GitHub README 열기)\n\
 F2, Del, Ctrl+C/X/V, F5\t탐색기와 동일\n\n\
 주소 칸: 경로의 폴더를 누르면 그리로 이동, 현재 폴더·빈 곳을 누르거나 Ctrl+L이면 경로 입력\n\
@@ -838,6 +840,9 @@ struct App {
     held: Option<u16>,        // key whose auto-repeats are swallowed until it is released (runtime only)
     matcher: Option<Matcher>, // select-by-pattern box while open
     match_last: String,       // last pattern used (runtime only, never saved)
+    peek: HWND,               // F3 quick preview while open
+    peek_pane: usize,         // pane whose focused item it shows
+    peek_name: String,        // that item's display name
 }
 
 // The Num+ / Num− box: popup, its edit, the pane it acts on, that pane's folder when it opened, deselect mode.
@@ -899,6 +904,9 @@ thread_local! {
         held: None,
         matcher: None,
         match_last: String::new(),
+        peek: HWND::default(),
+        peek_pane: 0,
+        peek_name: String::new(),
     });
 }
 
@@ -1213,12 +1221,22 @@ fn star_coverage(n: i32, kind: Star) -> Vec<u8> {
 
 unsafe fn draw_star(dc: HDC, rc: RECT, rgb: u32, kind: Star, dpi: i32) {
     let n = 15 * dpi / 96;
-    let cov = star_coverage(n, kind);
+    let mut px = Vec::with_capacity((n * n * 4) as usize);
+    for a in star_coverage(n, kind) {
+        let pre = |ch: u32| ((ch & 0xFF) * a as u32 / 255) as u8; // premultiplied BGRA
+        px.extend_from_slice(&[pre(rgb), pre(rgb >> 8), pre(rgb >> 16), a]);
+    }
+    let (x, y) = ((rc.left + rc.right - n) / 2, (rc.top + rc.bottom - n) / 2);
+    blit_bgra(dc, RECT { left: x, top: y, right: x + n, bottom: y + n }, n, n, &px);
+}
+
+// Premultiplied top-down BGRA pixels (w×h) drawn into `to` through a throwaway DIB.
+unsafe fn blit_bgra(dc: HDC, to: RECT, w: i32, h: i32, px: &[u8]) {
     let bmi = BITMAPINFO {
         bmiHeader: BITMAPINFOHEADER {
             biSize: size_of::<BITMAPINFOHEADER>() as u32,
-            biWidth: n,
-            biHeight: -n,
+            biWidth: w,
+            biHeight: -h,
             biPlanes: 1,
             biBitCount: 32,
             biCompression: BI_RGB.0,
@@ -1228,16 +1246,11 @@ unsafe fn draw_star(dc: HDC, rc: RECT, rgb: u32, kind: Star, dpi: i32) {
     };
     let mut bits = std::ptr::null_mut();
     let Ok(bmp) = CreateDIBSection(Some(dc), &bmi, DIB_RGB_COLORS, &mut bits, None, 0) else { return };
-    let px = std::slice::from_raw_parts_mut(bits as *mut u8, (n * n * 4) as usize);
-    for (i, &a) in cov.iter().enumerate() {
-        let pre = |ch: u32| ((ch & 0xFF) * a as u32 / 255) as u8; // premultiplied BGRA
-        px[i * 4..i * 4 + 4].copy_from_slice(&[pre(rgb), pre(rgb >> 8), pre(rgb >> 16), a]);
-    }
+    std::slice::from_raw_parts_mut(bits as *mut u8, (w * h * 4) as usize).copy_from_slice(px);
     let mem = CreateCompatibleDC(Some(dc));
     let old = SelectObject(mem, bmp.into());
-    let (x, y) = ((rc.left + rc.right - n) / 2, (rc.top + rc.bottom - n) / 2);
     let blend = BLENDFUNCTION { BlendOp: AC_SRC_OVER as u8, BlendFlags: 0, SourceConstantAlpha: 255, AlphaFormat: AC_SRC_ALPHA as u8 };
-    _ = AlphaBlend(dc, x, y, n, n, mem, 0, 0, n, n, blend);
+    _ = AlphaBlend(dc, to.left, to.top, to.right - to.left, to.bottom - to.top, mem, 0, 0, w, h, blend);
     SelectObject(mem, old);
     _ = DeleteDC(mem);
     _ = DeleteObject(bmp.into());
@@ -1829,6 +1842,7 @@ unsafe extern "system" fn list_floor_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPA
 
 const WM_NARROW_AGAIN: u32 = WM_APP + 41;
 const WM_DROP_OPEN: u32 = WM_APP + 42;
+const WM_PEEK_DONE: u32 = WM_APP + 43; // wParam = gen; the picture itself stays in PEEK
 static NARROWING: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(-1); // column << 32 | width
 
 
@@ -4276,6 +4290,252 @@ extern "system" fn fav_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESUL
     }
 }
 
+// ---------- F3 quick preview ----------
+
+#[derive(Clone)]
+struct PeekReq {
+    path: String,
+    w: i32,
+    h: i32,
+    hwnd: isize, // popup told by WM_PEEK_DONE
+}
+
+struct Pix {
+    w: i32,
+    h: i32,
+    bgra: Vec<u8>, // premultiplied, top-down
+    size: Option<u64>,
+}
+
+// One worker, newest request only. gen moves on every want, so a result for an item already left
+// (or a closed popup) is dropped instead of shown.
+struct PeekJob {
+    gen: usize,
+    req: Option<PeekReq>,
+    done: Option<Option<Pix>>, // Some(None) = no preview
+}
+
+impl PeekJob {
+    fn want(&mut self, req: Option<PeekReq>) {
+        (self.gen, self.req, self.done) = (self.gen + 1, req, None);
+    }
+
+    fn publish(&mut self, gen: usize, r: Option<Pix>) -> bool {
+        if self.gen != gen {
+            return false;
+        }
+        self.done = Some(r);
+        true
+    }
+}
+
+static PEEK: Mutex<PeekJob> = Mutex::new(PeekJob { gen: 0, req: None, done: None });
+static PEEK_WAKE: Condvar = Condvar::new();
+
+fn peek_job() -> std::sync::MutexGuard<'static, PeekJob> {
+    PEEK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+fn want_peek(req: Option<PeekReq>) {
+    let wake = req.is_some();
+    peek_job().want(req);
+    if wake {
+        static WORKER: Once = Once::new();
+        WORKER.call_once(|| _ = std::thread::Builder::new().spawn(peek_worker));
+        PEEK_WAKE.notify_one();
+    }
+}
+
+// Lives until the process ends. COM is up only while one picture is made; the lock is never held then.
+fn peek_worker() {
+    let mut seen = 0;
+    loop {
+        let (gen, req) = {
+            let mut j = peek_job();
+            while j.req.is_none() || j.gen == seen {
+                j = PEEK_WAKE.wait(j).unwrap_or_else(|e| e.into_inner());
+            }
+            (j.gen, j.req.clone().unwrap())
+        };
+        seen = gen;
+        let pix = unsafe {
+            let com = CoInitializeEx(None, COINIT_APARTMENTTHREADED).is_ok();
+            let pix = peek_pixels(&req);
+            if com {
+                CoUninitialize();
+            }
+            pix
+        };
+        if peek_job().publish(gen, pix) {
+            unsafe { _ = PostMessageW(Some(HWND(req.hwnd as _)), WM_PEEK_DONE, WPARAM(gen), LPARAM(0)) };
+        }
+    }
+}
+
+// The shell's thumbnail (or its icon when there is none), copied out so no GDI or COM object leaves this call.
+unsafe fn peek_pixels(req: &PeekReq) -> Option<Pix> {
+    let f: IShellItemImageFactory = SHCreateItemFromParsingName(&HSTRING::from(&req.path), None).ok()?;
+    let bmp = f.GetImage(SIZE { cx: req.w, cy: req.h }, SIIGBF_RESIZETOFIT).ok()?;
+    let mut bm = BITMAP::default();
+    GetObjectW(bmp.into(), size_of::<BITMAP>() as i32, Some(&mut bm as *mut _ as _));
+    let (w, h) = (bm.bmWidth, bm.bmHeight.abs());
+    let mut bgra = vec![0u8; (w.max(0) * h * 4) as usize];
+    let mut bmi = BITMAPINFO {
+        bmiHeader: BITMAPINFOHEADER {
+            biSize: size_of::<BITMAPINFOHEADER>() as u32,
+            biWidth: w,
+            biHeight: -h,
+            biPlanes: 1,
+            biBitCount: 32,
+            biCompression: BI_RGB.0,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let dc = CreateCompatibleDC(None);
+    let rows = if bgra.is_empty() { 0 } else { GetDIBits(dc, bmp, 0, h as u32, Some(bgra.as_mut_ptr() as _), &mut bmi, DIB_RGB_COLORS) };
+    _ = DeleteDC(dc);
+    _ = DeleteObject(bmp.into());
+    if rows != h || rows == 0 {
+        return None;
+    }
+    fix_alpha(&mut bgra);
+    let size = std::fs::metadata(&req.path).ok().filter(|m| m.is_file()).map(|m| m.len());
+    Some(Pix { w, h, bgra, size })
+}
+
+// Photos come back with every alpha byte 0: make them opaque. Anything with real alpha is left alone.
+fn fix_alpha(bgra: &mut [u8]) {
+    if bgra.chunks(4).all(|p| p.get(3) == Some(&0)) {
+        bgra.chunks_mut(4).for_each(|p| p[3] = 255);
+    }
+}
+
+// [picture, name, size] inside the popup's client rect.
+fn peek_geo(rc: RECT, dpi: i32) -> [RECT; 3] {
+    let s = |v: i32| v * dpi / 96;
+    let (l, r) = (rc.left + s(16), rc.right - s(16));
+    let size = RECT { left: l, right: r, top: rc.bottom - s(12) - s(18), bottom: rc.bottom - s(12) };
+    let name = RECT { left: l, right: r, top: size.top - s(22), bottom: size.top };
+    [RECT { left: l, right: r, top: rc.top + s(16), bottom: name.top - s(8) }, name, size]
+}
+
+unsafe fn open_peek(i: usize) {
+    let Some(fv) = view_of::<IFolderView2>(i) else { return };
+    let (main, dpi, open) = app(|a| (a.main, a.dpi, a.peek));
+    if !open.0.is_null() {
+        return;
+    }
+    if fv.GetFocusedItem().unwrap_or(-1) < 0 {
+        _ = MessageBeep(MB_ICONWARNING);
+        return;
+    }
+    let s = |v: i32| v * dpi / 96;
+    let mut rc = RECT::default();
+    _ = GetClientRect(main, &mut rc);
+    let (w, h) = ((rc.right * 7 / 10).min(s(900)), (rc.bottom * 7 / 10).min(s(700)));
+    let mut pt = POINT { x: (rc.right - w) / 2, y: (rc.bottom - h) / 2 };
+    _ = ClientToScreen(main, &mut pt);
+    let Ok(h) = CreateWindowExW(WS_EX_TOOLWINDOW, w!("GridsPeek"), w!(""), WS_POPUP | WS_VISIBLE, pt.x, pt.y, w, h, Some(main), None, None, None) else {
+        return;
+    };
+    let square = DWMWCP_DONOTROUND;
+    _ = DwmSetWindowAttribute(h, DWMWA_WINDOW_CORNER_PREFERENCE, &square as *const _ as _, 4);
+    app(|a| (a.peek, a.peek_pane) = (h, i));
+    load_peek();
+}
+
+// Asks the worker for the pane's focused item at the picture area's size.
+unsafe fn load_peek() {
+    let (h, i, dpi) = app(|a| (a.peek, a.peek_pane, a.dpi));
+    let Some(fv) = view_of::<IFolderView2>(i) else { return };
+    let it = fv.GetItem::<IShellItem>(fv.GetFocusedItem().unwrap_or(-1)).ok();
+    let shown = |kind| it.as_ref().and_then(|it| it.GetDisplayName(kind).ok()).map(|p| pwstr(p));
+    app(|a| a.peek_name = shown(SIGDN_NORMALDISPLAY).unwrap_or_default());
+    let mut rc = RECT::default();
+    _ = GetClientRect(h, &mut rc);
+    let [pic, ..] = peek_geo(rc, dpi);
+    match shown(SIGDN_DESKTOPABSOLUTEPARSING) {
+        Some(path) => want_peek(Some(PeekReq { path, w: pic.right - pic.left, h: pic.bottom - pic.top, hwnd: h.0 as isize })),
+        None => {
+            let mut j = peek_job();
+            j.want(None);
+            j.done = Some(None);
+        }
+    }
+    _ = InvalidateRect(Some(h), None, false);
+}
+
+// Next / previous in the view's own order. Only a real neighbour (S_OK, in range) that got selected moves it.
+unsafe fn step_peek(prev: bool) {
+    let Some(fv) = view_of::<IFolderView2>(app(|a| a.peek_pane)) else { return };
+    let cur = fv.GetFocusedItem().unwrap_or(-1);
+    let mut next = -1;
+    let hr = (Interface::vtable(&fv).GetVisibleItem)(Interface::as_raw(&fv), cur, prev.into(), &mut next);
+    let n = fv.ItemCount(SVGIO_ALLVIEW).unwrap_or(0);
+    let flags = SVSI_SELECT.0 | SVSI_DESELECTOTHERS.0 | SVSI_ENSUREVISIBLE.0 | SVSI_FOCUSED.0;
+    if hr == S_OK && (0..n).contains(&next) && fv.SelectItem(next, flags as u32).is_ok() {
+        load_peek();
+    }
+}
+
+unsafe fn close_peek(h: HWND) {
+    let i = app(|a| a.peek_pane);
+    _ = DestroyWindow(h);
+    focus_view(i);
+}
+
+unsafe fn paint_peek(h: HWND) {
+    let (dpi, font, small, name) = app(|a| (a.dpi, a.font, a.small_font, a.peek_name.clone()));
+    buffered(h, |dc, rc| {
+        fill(dc, rc, pal().card);
+        frame(dc, rc, 1, pal().line);
+        let [pic, name_rc, size_rc] = peek_geo(rc, dpi);
+        let j = peek_job();
+        match &j.done {
+            Some(Some(p)) => {
+                // shrunk to fit if the shell handed back something bigger (an icon), never enlarged
+                let (pw, ph) = (pic.right - pic.left, pic.bottom - pic.top);
+                let k = (pw as f32 / p.w as f32).min(ph as f32 / p.h as f32).min(1.0);
+                let (dw, dh) = ((p.w as f32 * k) as i32, (p.h as f32 * k) as i32);
+                let (x, y) = ((pic.left + pic.right - dw) / 2, (pic.top + pic.bottom - dh) / 2);
+                blit_bgra(dc, RECT { left: x, top: y, right: x + dw, bottom: y + dh }, p.w, p.h, &p.bgra);
+                if let Some(b) = p.size {
+                    text(dc, size_rc, &human(b), small, pal().sub, DT_CENTER);
+                }
+            }
+            Some(None) => text(dc, pic, tr("No preview", "미리 볼 수 없습니다"), font, pal().sub, DT_CENTER),
+            None => text(dc, pic, tr("Loading…", "불러오는 중…"), font, pal().sub, DT_CENTER),
+        }
+        drop(j);
+        text(dc, name_rc, &name, font, pal().text, DT_CENTER);
+    });
+}
+
+extern "system" fn peek_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
+    unsafe {
+        match msg {
+            WM_PAINT => paint_peek(h),
+            WM_ERASEBKGND => return LRESULT(1),
+            WM_PEEK_DONE => _ = InvalidateRect(Some(h), None, false),
+            WM_LBUTTONUP => close_peek(h),
+            WM_KEYDOWN => match VIRTUAL_KEY(wp.0 as u16) {
+                // a held F3 only opens it; its repeats must not close it again
+                VK_ESCAPE | VK_SPACE | VK_F3 if lp.0 & (1 << 30) == 0 => close_peek(h),
+                k @ (VK_LEFT | VK_UP | VK_RIGHT | VK_DOWN) => step_peek(k == VK_LEFT || k == VK_UP),
+                _ => {}
+            },
+            WM_ACTIVATE if (wp.0 & 0xffff) as u32 == WA_INACTIVE => _ = PostMessageW(Some(h), WM_CLOSE, WPARAM(0), LPARAM(0)),
+            WM_DESTROY => {
+                want_peek(None);
+                app(|a| a.peek = HWND::default());
+            }
+            _ => return DefWindowProcW(h, msg, wp, lp),
+        }
+        LRESULT(0)
+    }
+}
+
 // ---------- keyboard shortcuts window (Ctrl+/ or the view menu) ----------
 
 struct KeyRow {
@@ -4962,6 +5222,11 @@ unsafe fn run_copy(srcs: &[String], dst: &str, rename: bool, mv: bool) -> Result
 // ---------- keyboard ----------
 
 unsafe fn key(m: &MSG) -> bool {
+    // the preview takes its own keys; pane shortcuts must not act behind it
+    let peek = app(|a| a.peek);
+    if !peek.0.is_null() && m.hwnd == peek {
+        return false;
+    }
     let down = |k: VIRTUAL_KEY| GetKeyState(k.0 as i32) < 0;
     let (ctrl, shift, alt) = (down(VK_CONTROL), down(VK_SHIFT), down(VK_MENU));
     // the pattern box takes Enter / Esc; everything else is typing, so pane shortcuts stay out of it
@@ -5065,6 +5330,11 @@ unsafe fn key(m: &MSG) -> bool {
         VK_F5 if list() => {
             resum_sizes();
             return shell();
+        }
+        VK_F3 if !ctrl && !shift && !alt && list() => {
+            if m.lParam.0 & (1 << 30) == 0 {
+                open_peek(a);
+            }
         }
         VK_V if ctrl && !shift && !alt && list() => {
             if !paste_key(m.lParam.0 & (1 << 30) != 0, || try_paste(a)) {
@@ -5577,6 +5847,14 @@ fn main() -> Result<()> {
             hInstance: hinst,
             hCursor: arrow,
             lpszClassName: w!("GridsMatch"),
+            ..Default::default()
+        });
+        RegisterClassW(&WNDCLASSW {
+            style: CS_DROPSHADOW,
+            lpfnWndProc: Some(peek_proc),
+            hInstance: hinst,
+            hCursor: arrow,
+            lpszClassName: w!("GridsPeek"),
             ..Default::default()
         });
         KO.store(s.ko, Ordering::Relaxed);
@@ -6157,6 +6435,32 @@ mod tests {
         assert!(j.want(&b, false) && j.gen != g);
         assert!(!j.publish(g, 5, false, false));
         assert!(j.publish(j.gen, 5, false, true) && j.partial);
+    }
+
+    #[test]
+    fn peek_newest_only() {
+        let req = |p: &str| Some(PeekReq { path: p.into(), w: 10, h: 10, hwnd: 0 });
+        let pix = || Some(Pix { w: 1, h: 1, bgra: vec![0; 4], size: Some(3) });
+        let mut j = PeekJob { gen: 0, req: None, done: None };
+        j.want(req("a"));
+        let a = j.gen;
+        j.want(req("b")); // arrow pressed before a's picture came
+        assert!(!j.publish(a, pix()) && j.done.is_none()); // a's picture is dropped
+        assert!(j.publish(j.gen, None) && matches!(j.done, Some(None))); // b: no preview
+        let b = j.gen;
+        j.want(None); // closed
+        assert!(j.gen != b && j.req.is_none() && j.done.is_none());
+        assert!(!j.publish(b, pix()) && j.done.is_none());
+    }
+
+    #[test]
+    fn peek_alpha() {
+        let mut photo = [10u8, 20, 30, 0, 40, 50, 60, 0];
+        fix_alpha(&mut photo);
+        assert_eq!(photo, [10u8, 20, 30, 255, 40, 50, 60, 255]);
+        let mut icon = [0u8, 0, 0, 0, 40, 50, 60, 128];
+        fix_alpha(&mut icon);
+        assert_eq!(icon, [0u8, 0, 0, 0, 40, 50, 60, 128]); // real alpha: kept, transparent corners too
     }
 
     #[test]

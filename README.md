@@ -57,6 +57,7 @@ The exe is not code-signed, so Windows SmartScreen may warn the first time: choo
 | F6 / Shift+F6 | Move between file list, address bar, filter and folder tree |
 | Enter / Esc | Apply / cancel the address or filter |
 | Ctrl+H | Show hidden files |
+| F3 | Quick preview of the focused file (arrows: previous / next, Esc: close) |
 | Ctrl+S | Save the current session |
 | Ctrl+B | Favourites list (↑/↓, Enter to open, Del to remove) |
 | Ctrl+/ | Keyboard shortcuts (this list) |
