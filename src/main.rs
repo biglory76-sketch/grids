@@ -203,6 +203,7 @@ Ctrl+B\tFavourites list (↑/↓ to choose, Enter to open, Del to remove)\n\
 Ctrl+Shift+M\tMaximize / restore the active pane (or double-click its header)\n\
 Ctrl+Shift+C\tCopy the full path of the selected items (or of the current folder)\n\
 Ctrl+F\tFilter (*.pdf;*.txt or part of a name; folders always show)\n\
+F6 / Shift+F6\tMove between file list, address bar, filter and folder tree\n\
 Enter / Esc\tApply / cancel the address or filter\n\
 Ctrl+H\tShow hidden files\n\
 F1\tHelp (opens the README on GitHub)\n\
@@ -226,6 +227,7 @@ Ctrl+B\t즐겨찾기 목록 (↑/↓ 고르기, Enter 열기, Del 빼기)\n\
 Ctrl+Shift+M\t선택한 패널 크게 보기 / 복원 (머리줄 더블클릭도 가능)\n\
 Ctrl+Shift+C\t선택한 항목(없으면 현재 폴더)의 전체 경로 복사\n\
 Ctrl+F\t필터 (*.pdf;*.txt 또는 이름 일부, 폴더는 항상 표시)\n\
+F6 / Shift+F6\t파일 목록·주소창·필터·폴더 트리 사이 이동\n\
 Enter / Esc\t주소창·필터 적용 / 취소\n\
 Ctrl+H\t숨김 파일 표시\n\
 F1\t도움말 (GitHub README 열기)\n\
@@ -4019,6 +4021,21 @@ unsafe fn key(m: &MSG) -> bool {
             apply_filter(a);
             focus_view(a);
         }
+        VK_F6 if !ctrl && !alt && IsChild(app(|x| x.main), m.hwnd).as_bool() => {
+            let th = app(|x| x.tree_hwnd);
+            let tv = FindWindowExW(Some(th), None, w!("SysTreeView32"), PCWSTR::null()).ok().filter(|_| !th.0.is_null());
+            let in_tree = th == m.hwnd || IsChild(th, m.hwnd).as_bool();
+            let pos = if addr { 1 } else if filt { 2 } else if in_tree { 3 } else { 0 };
+            match focus_ring(pos, shift, tv.is_some()) {
+                1 => _ = focus_ctl(a, ID_EDIT),
+                2 => _ = focus_ctl(a, ID_FILTER),
+                3 => {
+                    _ = SetFocus(tv);
+                    reveal_tree_selection();
+                }
+                _ => focus_view(a),
+            }
+        }
         _ if addr || filt => return false,
         VK_C if ctrl && shift && !alt && list() => copy_paths(a),
         VK_DOWN if alt && !ctrl && !shift => recent_menu(a),
@@ -4036,9 +4053,21 @@ unsafe fn key(m: &MSG) -> bool {
     true
 }
 
+// F6 ring: 0 file list, 1 address bar, 2 filter, 3 folder tree (skipped without one).
+fn focus_ring(pos: usize, back: bool, tree: bool) -> usize {
+    let n = if tree { 4 } else { 3 };
+    (pos.min(n - 1) + if back { n - 1 } else { 1 }) % n
+}
+
+// Keys Grids handles itself (Ctrl+Tab, F6, ...) only sync the tree; tree keys (arrows, typing) still navigate.
+fn tree_input_after(prev: bool, in_tree: bool, used: bool) -> bool {
+    !used && (prev || in_tree)
+}
+
 unsafe fn pre_translate(m: &MSG) -> bool {
-    if m.message == WM_LBUTTONDOWN || m.message == WM_KEYDOWN {
-        app(|a| a.tree_input |= a.tree_hwnd == m.hwnd || IsChild(a.tree_hwnd, m.hwnd).as_bool());
+    let in_tree = || app(|a| a.tree_hwnd == m.hwnd || IsChild(a.tree_hwnd, m.hwnd).as_bool());
+    if m.message == WM_LBUTTONDOWN && in_tree() {
+        app(|a| a.tree_input = true);
     }
     match m.message {
         WM_MOUSEMOVE => {
@@ -4057,7 +4086,14 @@ unsafe fn pre_translate(m: &MSG) -> bool {
             }
             false
         }
-        WM_KEYDOWN | WM_SYSKEYDOWN => key(m),
+        WM_KEYDOWN | WM_SYSKEYDOWN => {
+            let tree = m.message == WM_KEYDOWN && in_tree();
+            // cleared while key() runs, so the selection sync it triggers isn't taken for user input
+            let prev = app(|a| std::mem::take(&mut a.tree_input));
+            let used = key(m);
+            app(|a| a.tree_input = tree_input_after(prev, tree, used));
+            used
+        }
         _ => false,
     }
 }
@@ -4594,6 +4630,22 @@ mod tests {
         let gone = [grid[0], grid[2], grid[3]];
         assert_eq!([n(&gone, 0, 0, 1), n(&gone, 3, -1, 0), n(&gone, 2, 0, 1)], [None, None, Some(3)]);
         assert_eq!(n(&grid, 7, 1, 0), None);
+    }
+
+    #[test]
+    fn focus_rings() {
+        let walk = |back, tree| (0..4).map(|p| focus_ring(p, back, tree)).collect::<Vec<_>>();
+        assert_eq!(walk(false, true), [1, 2, 3, 0]);
+        assert_eq!(walk(true, true), [3, 0, 1, 2]);
+        assert_eq!(walk(false, false)[..3], [1, 2, 0]);
+        assert_eq!(walk(true, false)[..3], [2, 0, 1]);
+    }
+
+    #[test]
+    fn tree_input_kept_only_for_tree_keys() {
+        assert!(tree_input_after(false, true, false)); // arrow in the tree
+        assert!(!tree_input_after(true, true, true)); // Ctrl+Tab / F6 in the tree
+        assert!(tree_input_after(true, false, false) && !tree_input_after(false, false, false)); // elsewhere: unchanged
     }
 
     #[test]
