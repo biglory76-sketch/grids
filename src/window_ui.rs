@@ -47,6 +47,58 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                     relayout();
                     redraw_all(); // maximize / restore
                 }
+                // back from minimized: WM_ACTIVATE came while still minimized and left focus alone
+                let f = GetFocus();
+                if wp.0 as u32 != SIZE_MINIMIZED && !app(|a| a.focus_wait) && GetActiveWindow() == h && (f.is_invalid() || f == h) {
+                    restore_focus();
+                }
+            }
+            // WA_ACTIVE (Alt+Tab, taskbar, a popup closing, a second grids.exe): focus back where it was.
+            // WA_CLICKACTIVE: as before, so the click lands on what was under it (crumbs stay crumbs); TIMER_FOCUS
+            // looks again once that click is handled.
+            WM_ACTIVATE => {
+                let (state, min) = ((wp.0 & 0xffff) as u32, wp.0 >> 16 & 0xffff != 0);
+                if state == WA_INACTIVE {
+                    keep_focus(h);
+                } else if state == WA_ACTIVE && !min {
+                    restore_focus();
+                    return LRESULT(0);
+                } else if state == WA_CLICKACTIVE && !min {
+                    app(|a| a.focus_wait = true);
+                    SetTimer(Some(h), TIMER_FOCUS, 10, None);
+                }
+                return DefWindowProcW(h, msg, wp, lp);
+            }
+            WM_MOUSEACTIVATE => {
+                app(|a| a.click_nc = (lp.0 & 0xffff) as u32 != HTCLIENT);
+                return DefWindowProcW(h, msg, wp, lp);
+            }
+            // minimizing may drop focus before WA_INACTIVE comes
+            WM_SYSCOMMAND => {
+                if wp.0 as u32 & 0xfff0 == SC_MINIMIZE {
+                    keep_focus(h);
+                }
+                return DefWindowProcW(h, msg, wp, lp);
+            }
+            // a list, edit, button or the sidebar took the click: nothing to do. Title bar: back where it was;
+            // empty client space (crumb gaps, top bar, status line): the active list. Waits out drags and menus.
+            WM_TIMER if wp.0 == TIMER_FOCUS => {
+                if !GetCapture().is_invalid() || GetAsyncKeyState(VK_LBUTTON.0 as i32) < 0 {
+                    return LRESULT(0);
+                }
+                _ = KillTimer(Some(h), TIMER_FOCUS);
+                let nc = app(|a| {
+                    a.focus_wait = false;
+                    std::mem::take(&mut a.click_nc)
+                });
+                let f = GetFocus();
+                if GetActiveWindow() == h && (f.is_invalid() || f == h) {
+                    if nc {
+                        restore_focus();
+                    } else {
+                        focus_view(app(|a| a.s.active));
+                    }
+                }
             }
             WM_ENTERSIZEMOVE => {
                 app(|a| a.sizing = true);
@@ -430,6 +482,7 @@ pub(crate) unsafe fn hotkey_pressed(main: HWND) {
             _ = SetForegroundWindow(p);
         }
     } else if GetAncestor(GetForegroundWindow(), GA_ROOTOWNER) == main && !iconic {
+        keep_focus(main);
         _ = ShowWindow(main, SW_MINIMIZE);
     } else {
         if iconic {

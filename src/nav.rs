@@ -143,6 +143,37 @@ pub(crate) unsafe fn focus_view(i: usize) {
     }
 }
 
+// Grids going to the back (another app, a popup, minimize): remember which of its controls had focus.
+pub(crate) unsafe fn keep_focus(main: HWND) {
+    let f = GetFocus();
+    if IsChild(main, f).as_bool() {
+        app(|a| a.focus_keep = f);
+    }
+}
+
+// Coming back: focus where keep_focus left it if that is still the active pane's address / filter / list or the
+// sidebar, else the active list. The edits keep their text, caret and selection (no EM_SETSEL).
+pub(crate) unsafe fn restore_focus() {
+    let (main, i, k, tree, th) = app(|a| (a.main, a.s.active, a.focus_keep, a.s.tree, a.tree_hwnd));
+    let shown = app(|a| a.panes.get(i)?.as_ref().map(|p| p.hwnd)).is_some_and(|p| IsWindowVisible(p).as_bool());
+    let within = |root: HWND| root == k || IsChild(root, k).as_bool();
+    let ok = IsWindow(Some(k)).as_bool()
+        && ((shown && (pane_ctl(i, ID_EDIT) == Some(k) || pane_ctl(i, ID_FILTER) == Some(k)))
+            || view_of::<IShellView>(i).and_then(|sv| sv.GetWindow().ok()).is_some_and(within)
+            || (tree && IsWindowVisible(th).as_bool() && within(th)));
+    if ok {
+        if pane_ctl(i, ID_EDIT) == Some(k) {
+            _ = ShowWindow(k, SW_SHOWNA); // an idle address edit hides behind its crumbs; EN_SETFOCUS syncs it
+        }
+        _ = SetFocus(Some(k));
+    } else {
+        focus_view(i);
+    }
+    if GetFocus().is_invalid() {
+        _ = SetFocus(Some(main)); // as before: keys reach Grids, not WM_SYSKEYDOWN
+    }
+}
+
 pub(crate) unsafe fn focus_ctl(i: usize, id: i32) -> bool {
     if let Some(e) = pane_ctl(i, id) {
         _ = ShowWindow(e, SW_SHOWNA); // an idle address edit hides behind its crumbs
