@@ -62,6 +62,7 @@ const ID_DBLUP: usize = 1103;
 const ID_LANG: usize = 1104;
 const ID_HELP: usize = 1105;
 const ID_ABOUT: usize = 1106;
+const ID_TREE: usize = 1107;
 const HOME: &str = "https://github.com/efww/grids";
 const ID_ACCENT: usize = 1400; // + preset index
 const ID_ACCENT_PICK: usize = 1410;
@@ -201,6 +202,7 @@ Alt+↓\tRecent folders (all panes, newest first)\n\
 Ctrl+L, Alt+D, F4\tAddress bar: also .. or a subfolder name, a file to open, or a command such as cmd, wt, powershell (runs in this pane's folder)\n\
 Ctrl+B\tFavourites list (↑/↓ to choose, Enter to open, Del to remove)\n\
 Ctrl+Shift+M\tMaximize / restore the active pane (or double-click its header)\n\
+Ctrl+Shift+E\tHide / show the folder tree (its width is kept)\n\
 Ctrl+Shift+C\tCopy the full path of the selected items (or of the current folder)\n\
 Ctrl+F\tFilter (*.pdf;*.txt or part of a name; folders always show)\n\
 F6 / Shift+F6\tMove between file list, address bar, filter and folder tree\n\
@@ -225,6 +227,7 @@ Alt+↓\t최근 폴더 (모든 패널, 최근 순)\n\
 Ctrl+L, Alt+D, F4\t주소창: .. 이나 하위 폴더 이름, 열 파일, cmd·wt·powershell 같은 명령도 가능(이 패널 폴더에서 실행)\n\
 Ctrl+B\t즐겨찾기 목록 (↑/↓ 고르기, Enter 열기, Del 빼기)\n\
 Ctrl+Shift+M\t선택한 패널 크게 보기 / 복원 (머리줄 더블클릭도 가능)\n\
+Ctrl+Shift+E\t폴더 트리 숨기기 / 보이기 (폭은 그대로 유지)\n\
 Ctrl+Shift+C\t선택한 항목(없으면 현재 폴더)의 전체 경로 복사\n\
 Ctrl+F\t필터 (*.pdf;*.txt 또는 이름 일부, 폴더는 항상 표시)\n\
 F6 / Shift+F6\t파일 목록·주소창·필터·폴더 트리 사이 이동\n\
@@ -256,7 +259,8 @@ struct Session {
     accent_dark: u32,       // selection colour, dark theme
     dark: bool,
     dblup: bool,            // double-click on empty space goes to the parent folder
-    file: String,           // named session (.grids) the layout was last loaded from / saved to
+    tree: bool,             // folder tree shown (side keeps its width while hidden)
+    file: String,          // named session (.grids) the layout was last loaded from / saved to
     favs: Vec<String>,      // favourite folders (parsing names), app-wide
     recent: Vec<String>,    // recently visited folders from every pane, newest first, app-wide
     ko: bool,               // Korean UI
@@ -278,6 +282,7 @@ impl Default for Session {
             accent_dark: DARK.accents[1].1,
             dark: false,
             dblup: true,
+            tree: true,
             file: String::new(),
             favs: Vec::new(),
             recent: Vec::new(),
@@ -365,6 +370,7 @@ impl Session {
                 "accent_dark" => s.accent_dark = u32::from_str_radix(v.trim(), 16).unwrap_or(s.accent_dark) & 0xFFFFFF,
                 "dark" => s.dark = v.trim() == "1",
                 "dblup" => s.dblup = v.trim() != "0",
+                "tree" => s.tree = v.trim() != "0",
                 "lang" => s.ko = v.trim() == "ko",
                 "session" => s.file = v.trim().to_string(),
                 "fav" if !v.trim().is_empty() => s.favs.push(v.trim().to_string()),
@@ -399,7 +405,7 @@ impl Session {
         o += &format!("side={}\ncols={}\n", self.side, join(&self.heights));
         o += &format!("colr={}\nrowr={rowr}\nactive={}\n", join(&self.colr), self.active);
         o += &format!("accent={:06X}\naccent_dark={:06X}\ndark={}\n", self.accent, self.accent_dark, self.dark as u8);
-        o += &format!("dblup={}\nlang={}\n", self.dblup as u8, if self.ko { "ko" } else { "en" });
+        o += &format!("dblup={}\ntree={}\nlang={}\n", self.dblup as u8, self.tree as u8, if self.ko { "ko" } else { "en" });
         if !self.file.is_empty() {
             o += &format!("session={}\n", self.file);
         }
@@ -602,6 +608,7 @@ struct Geo {
     pad: i32,
     gap: i32,
     side: i32, // sidebar plate width
+    tree: bool, // sidebar shown; when hidden the grid starts at pad
     gx: i32,   // grid left
     xs: Vec<(i32, i32)>,
     ys: Vec<Vec<(i32, i32)>>, // per column
@@ -615,7 +622,7 @@ fn geo(a: &App) -> Geo {
     let (pad, gap, top) = (s(8), s(8), s(34));
     let bot = (rc.bottom - s(24)).max(top);
     let side = a.s.side.clamp(s(120), (rc.right - 2 * pad - gap - s(240)).max(s(120)));
-    let gx = pad + side + gap;
+    let gx = if a.s.tree { pad + side + gap } else { pad };
     Geo {
         xs: cells(gx, rc.right - pad - gx, &a.s.colr, gap),
         ys: a.s.rowr.iter().map(|r| cells(top, bot - top, r, gap)).collect(),
@@ -626,6 +633,7 @@ fn geo(a: &App) -> Geo {
         pad,
         gap,
         side,
+        tree: a.s.tree,
         gx,
         zoom: a.zoom.is_some(),
     }
@@ -2167,7 +2175,8 @@ unsafe fn relayout() {
         let s = |v: i32| v * a.dpi / 96;
         let sr = side_rect(&g);
         let tree = RECT { left: sr.left + s(2), top: sr.top + s(4), right: sr.right - s(2), bottom: sr.bottom - s(2) };
-        let mut moves = vec![(a.tree_hwnd, tree)];
+        let mut moves = if g.tree { vec![(a.tree_hwnd, tree)] } else { Vec::new() };
+        let mut shown = vec![(a.tree_hwnd, g.tree)];
         let mut x = g.pad;
         let tb = |id: i32| unsafe { GetDlgItem(Some(a.main), id) }.unwrap_or_default();
         for (id, w) in [(ID_TB_LAYOUT, s(70)), (ID_TB_SAVE, s(32)), (ID_TB_LOAD, s(32)), (ID_TB_VIEW, s(32)), (ID_TB_FAV, s(32))] {
@@ -2177,7 +2186,6 @@ unsafe fn relayout() {
         let right = g.w - g.pad; // the theme toggle sits at the far right
         moves.push((tb(ID_TB_THEME), RECT { left: right - s(32), top: s(5), right, bottom: s(5) + s(24) }));
         let full = RECT { left: g.gx, top: g.top, right: g.w - g.pad, bottom: g.bot };
-        let mut shown = Vec::new();
         for (i, p) in a.panes.iter().enumerate().take(a.s.panes()) {
             if let Some(p) = p {
                 moves.push((p.hwnd, if a.zoom == Some(i) { full } else { cell_rect(&g, &a.s.heights, i) }));
@@ -2713,6 +2721,28 @@ unsafe fn toggle_zoom() {
     focus_view(i);
 }
 
+// Like Explorer's navigation pane toggle: the grid takes the sidebar's room; its width is kept for when it comes back.
+unsafe fn toggle_tree() {
+    if app(|a| a.drag.is_some()) {
+        return;
+    }
+    let f = GetFocus();
+    let (had_focus, i) = app(|a| {
+        a.s.tree ^= true;
+        (a.tree_hwnd == f || IsChild(a.tree_hwnd, f).as_bool(), a.s.active)
+    });
+    relayout();
+    redraw_all();
+    if had_focus {
+        focus_view(i);
+    }
+}
+
+/// Splitter release stores the clamped sidebar width; while the tree is hidden the kept width stays.
+fn kept_side(tree: bool, stored: i32, clamped: i32) -> i32 {
+    if tree { clamped } else { stored }
+}
+
 unsafe fn set_layout(h: Vec<usize>) {
     app(|a| {
         a.zoom = None;
@@ -3159,9 +3189,11 @@ unsafe fn paint_main(h: HWND) {
     let (g, status, font, dpi) = app(|a| (geo(a), a.status.clone(), a.font, a.dpi));
     buffered(h, |dc, rc| {
         fill(dc, rc, pal().bg);
-        let side = side_rect(&g);
-        fill(dc, side, pal().card);
-        frame(dc, side, 1, pal().line);
+        if g.tree {
+            let side = side_rect(&g);
+            fill(dc, side, pal().card);
+            frame(dc, side, 1, pal().line);
+        }
         let st = status_rect(&g);
         text(dc, RECT { left: g.pad + 4 * dpi / 96, ..st }, &status, font, pal().sub, DT_LEFT);
     });
@@ -3742,7 +3774,7 @@ extern "system" fn fav_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESUL
                         let (main, prev, active) = app(|a| (a.main, a.fav_prev, a.s.active));
                         _ = DestroyWindow(h);
                         let fav_btn = GetDlgItem(Some(main), ID_TB_FAV).unwrap_or_default();
-                        if !prev.0.is_null() && IsWindow(Some(prev)).as_bool() && prev != fav_btn {
+                        if !prev.0.is_null() && IsWindow(Some(prev)).as_bool() && IsWindowVisible(prev).as_bool() && prev != fav_btn {
                             _ = SetFocus(Some(prev));
                         } else {
                             focus_view(active);
@@ -4009,6 +4041,7 @@ unsafe fn key(m: &MSG) -> bool {
         VK_S if ctrl => save_current(),
         VK_B if ctrl && !shift && !alt => open_favs(),
         VK_M if ctrl && shift && !alt => toggle_zoom(),
+        VK_E if ctrl && shift && !alt => toggle_tree(),
         VK_F1 => open_help(),
         VK_RETURN if addr => go_edit(a),
         VK_RETURN if filt => {
@@ -4023,7 +4056,7 @@ unsafe fn key(m: &MSG) -> bool {
         }
         VK_F6 if !ctrl && !alt && IsChild(app(|x| x.main), m.hwnd).as_bool() => {
             let th = app(|x| x.tree_hwnd);
-            let tv = FindWindowExW(Some(th), None, w!("SysTreeView32"), PCWSTR::null()).ok().filter(|_| !th.0.is_null());
+            let tv = FindWindowExW(Some(th), None, w!("SysTreeView32"), PCWSTR::null()).ok().filter(|_| !th.0.is_null() && IsWindowVisible(th).as_bool());
             let in_tree = th == m.hwnd || IsChild(th, m.hwnd).as_bool();
             let pos = if addr { 1 } else if filt { 2 } else if in_tree { 3 } else { 0 };
             match focus_ring(pos, shift, tv.is_some()) {
@@ -4177,7 +4210,7 @@ extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESU
                         Hit::Col(k) => drag_ratio(&mut a.s.colr, k, x - g.gap / 2, g.gx, g.w - g.pad - g.gx, g.gap, min),
                         Hit::Row(c, k) => drag_ratio(&mut a.s.rowr[c], k, y - g.gap / 2, g.top, g.bot - g.top, g.gap, min),
                     }
-                    a.s.side = geo(a).side;
+                    a.s.side = kept_side(a.s.tree, a.s.side, geo(a).side);
                     Some(())
                 });
                 if moved.is_some() {
@@ -4211,6 +4244,7 @@ extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESU
                     apply_theme();
                 }
                 id if id == ID_TB_VIEW as usize => popup_menu(app(|a| a.view_menu), ID_TB_VIEW),
+                ID_TREE => toggle_tree(),
                 ID_HIDDEN => toggle_hidden(),
                 ID_DBLUP => app(|a| a.s.dblup ^= true),
                 ID_LANG => set_language(!KO.load(Ordering::Relaxed)),
@@ -4222,8 +4256,9 @@ extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESU
                 _ => {}
             },
             WM_INITMENUPOPUP => {
-                let (menu, dblup, accent) = app(|a| (a.view_menu, a.s.dblup, a.s.accent_now()));
+                let (menu, dblup, tree, accent) = app(|a| (a.view_menu, a.s.dblup, a.s.tree, a.s.accent_now()));
                 let check = |id: usize, on: bool| CheckMenuItem(menu, id as u32, (MF_BYCOMMAND | if on { MF_CHECKED } else { MF_UNCHECKED }).0);
+                check(ID_TREE, tree);
                 check(ID_HIDDEN, hidden());
                 check(ID_DBLUP, dblup);
                 check(ID_LANG, KO.load(Ordering::Relaxed));
@@ -4418,6 +4453,7 @@ unsafe fn set_language(ko: bool) {
 unsafe fn make_menus() -> Result<HMENU> {
     let view = CreatePopupMenu()?;
     let item = |menu: HMENU, flags: MENU_ITEM_FLAGS, id: usize, text: &str| AppendMenuW(menu, flags, id, &HSTRING::from(text));
+    item(view, MF_STRING, ID_TREE, tr("Folder tree\tCtrl+Shift+E", "폴더 트리\tCtrl+Shift+E"))?;
     item(view, MF_STRING, ID_HIDDEN, tr("Show hidden files\tCtrl+H", "숨김 파일 표시\tCtrl+H"))?;
     item(view, MF_STRING, ID_DBLUP, tr("Double-click empty space: parent folder", "빈 곳 더블클릭: 위 폴더로"))?;
     let colors = CreatePopupMenu()?;
@@ -4639,6 +4675,19 @@ mod tests {
         assert_eq!(walk(true, true), [3, 0, 1, 2]);
         assert_eq!(walk(false, false)[..3], [1, 2, 0]);
         assert_eq!(walk(true, false)[..3], [2, 0, 1]);
+    }
+
+    #[test]
+    fn hidden_tree_keeps_its_width() {
+        // hidden, narrow window, column drag: the clamped 536 must not replace 600
+        assert_eq!(kept_side(false, 600, 536), 600);
+        assert_eq!(kept_side(true, 600, 536), 536); // shown: as before
+        let s = Session::parse(&Session { tree: false, side: 600, ..Session::default() }.to_ini());
+        assert_eq!((s.tree, s.side), (false, 600));
+        assert!(Session::parse("side=300\ndblup=1\n").tree); // older ini: shown
+        // grid starting at pad: the old sidebar splitter is no longer a splitter
+        let g = Geo { w: 1000, h: 600, top: 34, bot: 576, pad: 8, gap: 8, side: 240, tree: false, gx: 8, xs: vec![(8, 992)], ys: vec![vec![(34, 576)]], zoom: false };
+        assert!((240..264).all(|x| !matches!(hit(&g, x, 100), Some(Hit::Side))));
     }
 
     #[test]
