@@ -11,6 +11,8 @@ pub(crate) struct Pane {
     pub(crate) pending: Option<String>, // columns to put on when the next folder shows (session restore, open in)
     pub(crate) settle: Option<(String, u8)>, // columns just put on, and passes left to hold narrow widths (TIMER_SETTLE)
     pub(crate) recover: Option<(String, String)>, // missing folder, parent being opened instead (go_near)
+    pub(crate) icon: i32,   // current folder's icon in the system image list, -1 = none (yet)
+    pub(crate) ticket: u32, // its lookup (WM_PANE_ICON); 0 = none asked
 }
 
 pub(crate) struct App {
@@ -68,6 +70,7 @@ pub(crate) struct App {
     pub(crate) peek: HWND,               // F3 quick preview while open
     pub(crate) peek_pane: usize,         // pane whose focused item it shows
     pub(crate) peek_name: String,        // that item's display name
+    pub(crate) ilist: Option<IImageList>, // system small icons, for the address bar (shared, never freed)
 }
 
 // The Num+ / Num− box: popup, its edit, the pane it acts on, that pane's folder when it opened, deselect mode.
@@ -135,6 +138,7 @@ thread_local! {
         peek: HWND::default(),
         peek_pane: 0,
         peek_name: String::new(),
+        ilist: None,
     });
 }
 

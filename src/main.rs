@@ -6,14 +6,14 @@
 use std::cell::{Cell, RefCell};
 use std::fmt::Display;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Condvar, Mutex, Once};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
+use std::sync::{Condvar, Mutex, Once, OnceLock};
 use std::time::{Duration, Instant};
 use windows::core::*;
 use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_CAPTION_COLOR, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DONOTROUND, DWMWINDOWATTRIBUTE};
 use windows::Win32::Graphics::Gdi::*;
-use windows::Win32::Storage::FileSystem::{GetDiskFreeSpaceExW, GetDriveTypeW};
+use windows::Win32::Storage::FileSystem::{GetDiskFreeSpaceExW, GetDriveTypeW, FILE_FLAGS_AND_ATTRIBUTES};
 use windows::Win32::System::Com::*;
 use windows::Win32::System::DataExchange::{CloseClipboard, EmptyClipboard, GetClipboardData, OpenClipboard, RegisterClipboardFormatW, SetClipboardData};
 use windows::Win32::System::Diagnostics::Debug::MessageBeep;
@@ -21,7 +21,7 @@ use windows::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress, Lo
 use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
 use windows::Win32::System::Ole::*;
 use windows::Win32::System::SystemServices::{MK_CONTROL, MK_SHIFT, MODIFIERKEYS_FLAGS, SFGAO_FLAGS, SFGAO_FOLDER, SFGAO_STREAM};
-use windows::Win32::System::Threading::{OpenProcess, INFINITE, QueryFullProcessImageNameW, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION};
+use windows::Win32::System::Threading::{CreateEventW, SetEvent, OpenProcess, INFINITE,QueryFullProcessImageNameW, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION};
 use windows::Win32::System::Variant::{VariantClear, VARIANT, VT_I4};
 use windows::Win32::UI::Accessibility::{AccessibleObjectFromPoint, IAccessible, ROLE_SYSTEM_LIST};
 use windows::Win32::UI::Controls::Dialogs::{ChooseColorW, CC_FULLOPEN, CC_RGBINIT, CHOOSECOLORW};
@@ -33,7 +33,7 @@ use windows::Win32::UI::Controls::{
     LVGS_FOCUSED, LVGS_SELECTED, LVGS_SUBSETED, LIST_VIEW_GROUP_STATE_FLAGS, LVM_GETGROUPINFO, LVM_GETGROUPRECT, LVM_GETIMAGELIST, LVSIL_GROUPHEADER,
     HDF_CENTER, HDF_RIGHT, HDF_SORTDOWN, HDF_SORTUP, HDITEMW, HDI_FORMAT, HDI_TEXT, HDM_GETITEMW, HDN_BEGINTRACKW, HDN_ITEMCHANGINGW, HDN_TRACKW, HDI_WIDTH, NMHEADERW, LVCF_MINWIDTH, LVCOLUMNW, LVM_GETCOLUMNW, LVM_SETCOLUMNW,
     LVM_GETCOLUMNWIDTH, LVM_SETCOLUMNWIDTH, NMCUSTOMDRAW, NMHDR, NMLVCUSTOMDRAW, NM_CUSTOMDRAW,
-    TTF_IDISHWND, TTF_SUBCLASS, TTM_ADDTOOLW, TTM_UPDATETIPTEXTW, TTTOOLINFOW, WM_MOUSELEAVE,
+    TTF_IDISHWND, TTF_SUBCLASS, TTM_ADDTOOLW, TTM_UPDATETIPTEXTW, TTTOOLINFOW, WM_MOUSELEAVE, IImageList, ILD_NORMAL,
 };
 use windows::Win32::UI::HiDpi::{GetDpiForWindow, SystemParametersInfoForDpi};
 use windows::Win32::UI::Input::KeyboardAndMouse::*;
@@ -1012,6 +1012,53 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn address_icon() {
+        // the square sits inside the pill, left of where crumbs and edit start; none in a narrow pill
+        for dpi in [96, 144] {
+            let s = |v: i32| v * dpi / 96;
+            let addr = |w| RECT { left: 100, top: s(4), right: 100 + w, bottom: s(4) + s(22) };
+            assert_eq!(addr_icon(addr(s(90) - 1), dpi), None);
+            assert_eq!(crumb_field(addr(s(90) - 1), dpi).left, 100 + s(8)); // as before
+            let a = addr(s(90));
+            let r = addr_icon(a, dpi).unwrap();
+            assert!(r.left > a.left && r.right < a.left + s(26) && r.top >= a.top && r.bottom <= a.bottom, "{dpi}");
+            assert_eq!((r.right - r.left, r.bottom - r.top), (s(16), s(16)));
+            assert_eq!(crumb_field(a, dpi).left, a.left + s(26));
+        }
+        // one waiting lookup per pane: a newer one replaces it, its PIDL comes back exactly once
+        let mut q = Vec::new();
+        let mut freed = Vec::new();
+        for (h, t, pidl) in [(1, 1, 101), (2, 2, 102), (1, 3, 103), (1, 4, 104), (2, 5, 105), (3, 6, 106)] {
+            freed.extend(enqueue(&mut q, (h, t, pidl)));
+        }
+        assert_eq!(q, [(1, 4, 104), (2, 5, 105), (3, 6, 106)]);
+        assert_eq!(freed, [101, 103, 102]);
+        for k in 0..100 {
+            freed.extend(enqueue(&mut q, (k % MAXP as isize, 10 + k as u32, 1000 + k as usize)));
+        }
+        assert!(q.len() <= MAXP);
+        // a closed pane's waiting lookup is taken out; nothing for a pane without one
+        let before = q.len();
+        assert_eq!(unqueue(&mut q, 5), Some(1085));
+        assert_eq!((unqueue(&mut q, 5), q.len()), (None, before - 1));
+        // every PIDL handed in is either still queued or came back, never both, never twice
+        let mut all: Vec<usize> = freed.iter().copied().chain([1085]).chain(q.iter().map(|r| r.2)).collect();
+        let n = all.len();
+        all.sort();
+        all.dedup();
+        assert_eq!((n, all.len()), (106, 106));
+        // results: only the pane's current lookup counts
+        assert_eq!(take_icon(6, 5, 3), None); // an older folder's, arriving late
+        assert_eq!(take_icon(0, 0, 3), None); // nothing asked yet (or the clone failed: the icon stays -1)
+        assert_eq!(take_icon(7, 5, 3), None); // a closed pane's, sent to a new one with the same HWND value
+        assert_eq!(take_icon(6, 6, 3), Some(3));
+        assert_eq!(take_icon(6, 6, -1), Some(-1)); // lookup failed: no icon
+        // tickets skip 0 when they wrap
+        let t = AtomicU32::new(u32::MAX);
+        assert_eq!((next_ticket(&t), next_ticket(&t)), (u32::MAX, 1));
     }
 
     #[test]

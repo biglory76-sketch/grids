@@ -25,10 +25,21 @@ pub(crate) enum Crumb {
     More(Vec<(String, String)>), // folded parents, nearest first
 }
 
+// The folder icon's square at the front of the address pill, like Explorer's address bar; none in a narrow pill.
+// Fixed by the geometry alone, so crumbs and edit never shift when an icon arrives or goes.
+pub(crate) fn addr_icon(addr: RECT, dpi: i32) -> Option<RECT> {
+    let s = |v: i32| v * dpi / 96;
+    if addr.right - addr.left < s(90) {
+        return None;
+    }
+    let (left, top) = (addr.left + s(6), addr.top + (addr.bottom - addr.top - s(16)) / 2);
+    Some(RECT { left, top, right: left + s(16), bottom: top + s(16) })
+}
+
 // Where crumbs go in the address pill: the edit's horizontal span, a little inside the pill vertically.
 pub(crate) fn crumb_field(addr: RECT, dpi: i32) -> RECT {
     let s = |v: i32| v * dpi / 96;
-    let left = addr.left + s(8);
+    let left = addr.left + if addr_icon(addr, dpi).is_some() { s(26) } else { s(8) };
     RECT { left, top: addr.top + s(3), right: (addr.right - s(6)).max(left), bottom: addr.bottom - s(3) }
 }
 
@@ -160,14 +171,23 @@ pub(crate) unsafe fn crumb_hover(h: HWND, k: Option<usize>) {
 
 // One white plate per pane: a single accent border when active, flat fields in the top bar.
 pub(crate) unsafe fn paint_pane(h: HWND) {
-    let (active, i, dpi, icon_font, small_font, font, accent, hot, tint) = app(|a| {
+    let (active, i, dpi, icon_font, small_font, font, accent, hot, tint, folder) = app(|a| {
         let i = a.panes.iter().position(|p| p.as_ref().is_some_and(|p| p.hwnd == h));
         // a drop target-to-be looks active too
         let active = a.panes[a.s.active].as_ref().is_some_and(|p| p.hwnd == h) || a.drop_hover == h;
         let hot = a.crumb_hot.filter(|(w, _)| *w == h).map(|(_, k)| k);
         let tint = i.and_then(|i| tint_color(a.s.tints[i]));
-        (active, i, a.dpi, a.icon_font, a.small_font, a.font, a.s.accent_now(), hot, tint)
+        let folder = i.and_then(|i| a.panes[i].as_ref()).map_or(-1, |p| p.icon);
+        (active, i, a.dpi, a.icon_font, a.small_font, a.font, a.s.accent_now(), hot, tint, folder)
     });
+    let ilist = match app(|a| a.ilist.clone()) {
+        None if folder >= 0 => {
+            let l = SHGetImageList::<IImageList>(SHIL_SMALL as i32).ok();
+            app(|a| a.ilist = l.clone());
+            l
+        }
+        l => l,
+    };
     let crumbs_on = GetDlgItem(Some(h), ID_EDIT).is_ok_and(|e| !IsWindowVisible(e).as_bool());
     let filtered = i.is_some_and(|i| FILTERS.lock().is_ok_and(|f| !f[i].is_empty()));
     let (head, ink) = header_colors(h);
@@ -205,6 +225,12 @@ pub(crate) unsafe fn paint_pane(h: HWND) {
             fill(dc, p, pal().pill);
             if on {
                 frame(dc, p, 1, if active { ink } else { accent });
+            }
+        }
+        if let (Some(il), Some(r), true) = (&ilist, addr_icon(pg.addr, dpi), folder >= 0) {
+            if let Ok(icon) = il.GetIcon(folder, ILD_NORMAL.0) {
+                _ = DrawIconEx(dc, r.left, r.top, icon, r.right - r.left, r.bottom - r.top, 0, None, DI_NORMAL);
+                _ = DestroyIcon(icon);
             }
         }
         // idle address bar: C: › Users › Public, parents dimmed, the crumb under the mouse shaded

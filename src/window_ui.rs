@@ -238,6 +238,17 @@ pub(crate) extern "system" fn pane_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                     focus_view(i);
                 }
             }
+            // folder icon looked up: only the icon's square is repainted, nothing moves
+            WM_PANE_ICON => {
+                let (changed, dpi) = app(|a| {
+                    let p = a.panes.iter_mut().flatten().find(|p| p.hwnd == h);
+                    let new = p.and_then(|p| take_icon(p.ticket, wp.0 as u32, lp.0 as i32).filter(|&n| n != p.icon).map(|n| p.icon = n));
+                    (new.is_some(), a.dpi)
+                });
+                if let Some(r) = addr_icon(addr_rect(h, dpi), dpi).filter(|_| changed) {
+                    _ = InvalidateRect(Some(h), Some(&r), false);
+                }
+            }
             WM_ERASEBKGND => return LRESULT(1), // paint_pane covers everything
             WM_DRAWITEM => {
                 draw_button(&*(lp.0 as *const DRAWITEMSTRUCT));

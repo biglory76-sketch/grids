@@ -528,6 +528,7 @@ pub(crate) unsafe extern "system" fn list_floor_proc(h: HWND, msg: u32, wp: WPAR
 pub(crate) const WM_NARROW_AGAIN: u32 = WM_APP + 41;
 pub(crate) const WM_DROP_OPEN: u32 = WM_APP + 42;
 pub(crate) const WM_PEEK_DONE: u32 = WM_APP + 43; // wParam = gen; the picture itself stays in PEEK
+pub(crate) const WM_PANE_ICON: u32 = WM_APP + 44; // wParam = ticket, lParam = system image list index (-1: none)
 pub(crate) static NARROWING: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(-1); // column << 32 | width
 
 
@@ -618,7 +619,7 @@ pub(crate) unsafe fn settle_cols(h: HWND) {
 pub(crate) unsafe fn on_nav(i: usize, pidl: *const ITEMIDLIST) {
     let parse = name(pidl, SIGDN_DESKTOPABSOLUTEPARSING);
     let disp = name(pidl, SIGDN_DESKTOPABSOLUTEEDITING);
-    let Some((h, eb, view, cols)) = app(|a| {
+    let Some((h, eb, view, cols, ticket)) = app(|a| {
         let fs = is_fs(&parse);
         let old = std::mem::replace(&mut a.s.paths[i], parse.clone());
         visit(&mut a.s.recent, &old, &a.s.paths[i]);
@@ -628,9 +629,11 @@ pub(crate) unsafe fn on_nav(i: usize, pidl: *const ITEMIDLIST) {
         let (v, own) = (a.s.views[i], a.s.cols[i].clone());
         a.panes[i].as_mut().map(|p| {
             p.disp = disp.clone();
+            // the old folder's icon goes with its address (sync_addr below repaints the pill); a new lookup starts
+            (p.icon, p.ticket) = (-1, next_ticket(&ICON_TICKET));
             // waiting columns (session, open in) first, else the pane's own; none in shell places
             let cols = p.pending.take().unwrap_or(own);
-            (p.hwnd, p.eb.clone(), v, Some(cols).filter(|c| fs && !c.is_empty()))
+            (p.hwnd, p.eb.clone(), v, Some(cols).filter(|c| fs && !c.is_empty()), p.ticket)
         })
     }) else {
         return;
@@ -640,6 +643,7 @@ pub(crate) unsafe fn on_nav(i: usize, pidl: *const ITEMIDLIST) {
         sync_addr(h);
         show_path_end(e, &disp);
     }
+    request_icon(h, ticket, pidl);
     if let Ok(b) = GetDlgItem(Some(h), ID_FAV) {
         _ = InvalidateRect(Some(b), None, false);
     }
@@ -668,6 +672,103 @@ pub(crate) unsafe fn on_nav(i: usize, pidl: *const ITEMIDLIST) {
     if app(|a| a.s.active == i) {
         if let Ok(item) = SHCreateItemFromIDList::<IShellItem>(pidl) {
             sync_tree(&item);
+        }
+    }
+}
+
+// ---------- address bar folder icon ----------
+// Looked up off the UI thread (a slow share can take seconds). Tickets never repeat (0 = none asked), so a late
+// result can't land on a newer folder, nor on a new pane that got the same HWND value.
+pub(crate) static ICON_TICKET: AtomicU32 = AtomicU32::new(1);
+
+pub(crate) fn next_ticket(t: &AtomicU32) -> u32 {
+    loop {
+        let n = t.fetch_add(1, Ordering::Relaxed);
+        if n != 0 {
+            return n;
+        }
+    }
+}
+
+// A result is taken only for the pane's current lookup.
+pub(crate) fn take_icon(cur: u32, msg: u32, idx: i32) -> Option<i32> {
+    (cur != 0 && cur == msg).then_some(idx)
+}
+
+// Lookups not started yet: (pane HWND, ticket, PIDL copy), at most one per pane, so at most MAXP.
+// The PIDL belongs to the queue from push until the worker takes it; one replaced or removed comes back to be freed.
+pub(crate) type IconReq = (isize, u32, usize);
+pub(crate) static ICON_Q: Mutex<Vec<IconReq>> = Mutex::new(Vec::new());
+pub(crate) static ICON_WORKER: OnceLock<Option<isize>> = OnceLock::new(); // its wake event; None = couldn't start
+
+pub(crate) fn icon_q() -> std::sync::MutexGuard<'static, Vec<IconReq>> {
+    ICON_Q.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+pub(crate) fn enqueue(q: &mut Vec<IconReq>, req: IconReq) -> Option<usize> {
+    let old = unqueue(q, req.0);
+    q.push(req);
+    old
+}
+
+pub(crate) fn unqueue(q: &mut Vec<IconReq>, h: isize) -> Option<usize> {
+    let k = q.iter().position(|r| r.0 == h)?;
+    Some(q.remove(k).2)
+}
+
+pub(crate) unsafe fn request_icon(h: HWND, ticket: u32, pidl: *const ITEMIDLIST) {
+    let c = ILClone(pidl);
+    if c.is_null() {
+        return;
+    }
+    let ev = *ICON_WORKER.get_or_init(|| {
+        let ev = CreateEventW(None, false, false, PCWSTR::null()).ok()?;
+        let raw = ev.0 as isize;
+        match std::thread::Builder::new().spawn(move || icon_worker(raw)) {
+            Ok(_) => Some(raw),
+            Err(_) => {
+                _ = CloseHandle(ev);
+                None
+            }
+        }
+    });
+    let Some(ev) = ev else {
+        ILFree(Some(c));
+        return;
+    };
+    let old = enqueue(&mut icon_q(), (h.0 as isize, ticket, c as usize));
+    if let Some(old) = old {
+        ILFree(Some(old as *const ITEMIDLIST));
+    }
+    _ = SetEvent(HANDLE(ev as _));
+}
+
+// Lives until the process ends (never joined: a dead share mustn't hold up closing). One lookup at a time, oldest
+// first; it sleeps only on an empty queue, and pumps messages so COM calls into this apartment keep moving.
+pub(crate) fn icon_worker(ev: isize) {
+    unsafe {
+        let com = CoInitializeEx(None, COINIT_APARTMENTTHREADED).is_ok();
+        let mut m = MSG::default();
+        loop {
+            while PeekMessageW(&mut m, None, 0, 0, PM_REMOVE).as_bool() {
+                _ = TranslateMessage(&m);
+                DispatchMessageW(&m);
+            }
+            let next = {
+                let mut q = icon_q();
+                (!q.is_empty()).then(|| q.remove(0))
+            };
+            let Some((h, ticket, pidl)) = next else {
+                MsgWaitForMultipleObjectsEx(Some(&[HANDLE(ev as _)]), INFINITE, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+                continue;
+            };
+            let pidl = pidl as *const ITEMIDLIST;
+            let mut sfi = SHFILEINFOW::default();
+            let flags = SHGFI_PIDL | SHGFI_SYSICONINDEX | SHGFI_SMALLICON; // an index only: no HICON to free
+            let found = com && SHGetFileInfoW(PCWSTR(pidl as _), FILE_FLAGS_AND_ATTRIBUTES(0), Some(&mut sfi), size_of::<SHFILEINFOW>() as u32, flags) != 0;
+            ILFree(Some(pidl));
+            let idx = if found { sfi.iIcon.max(-1) } else { -1 };
+            _ = PostMessageW(Some(HWND(h as _)), WM_PANE_ICON, WPARAM(ticket as usize), LPARAM(idx as isize)); // fails if the pane is gone
         }
     }
 }

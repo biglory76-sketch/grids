@@ -42,7 +42,7 @@ pub(crate) unsafe fn create_pane(i: usize) -> Result<Pane> {
     let dt: IDropTarget = PaneDrop { slot: i, hwnd: h, ok: Cell::new(false), helper }.into();
     _ = RegisterDragDrop(h, &dt);
     let pending = Some(app(|a| a.s.cols[i].clone())); // the session's, for the first folder
-    Ok(Pane { hwnd: h, eb, cookie, disp: String::new(), pending, settle: None, recover: None })
+    Ok(Pane { hwnd: h, eb, cookie, disp: String::new(), pending, settle: None, recover: None, icon: -1, ticket: 0 })
 }
 
 pub(crate) unsafe fn destroy_pane(i: usize) {
@@ -62,6 +62,10 @@ pub(crate) unsafe fn destroy_pane(i: usize) {
         _ = IUnknown_SetSite(&p.eb, None);
         _ = p.eb.Destroy();
         _ = DestroyWindow(p.hwnd);
+        let waiting = unqueue(&mut icon_q(), p.hwnd.0 as isize);
+        if let Some(pidl) = waiting {
+            ILFree(Some(pidl as *const ITEMIDLIST));
+        }
     }
     drop(queued);
     if let Ok(mut f) = FILTERS.lock() {
@@ -121,7 +125,7 @@ pub(crate) unsafe fn layout_pane(h: HWND) {
     };
     let ctl = |id: i32| GetDlgItem(Some(h), id).unwrap_or_default();
     let mut moves: Vec<(HWND, RECT)> = [ID_BACK, ID_FWD, ID_UP, ID_OPEN_IN].iter().zip(pg.btn).map(|(&id, r)| (ctl(id), r)).collect();
-    moves.push((ctl(ID_EDIT), inside(pg.addr, s(8), s(6))));
+    moves.push((ctl(ID_EDIT), inside(pg.addr, crumb_field(pg.addr, dpi).left - pg.addr.left, s(6)))); // where the crumbs start
     moves.push((ctl(ID_FILTER), inside(pg.filt, s(24), s(6))));
     moves.push((ctl(ID_FAV), pg.fav));
     move_all(&moves, Some((&eb, pg.view)));
