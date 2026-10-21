@@ -30,6 +30,8 @@ pub(crate) unsafe fn create_pane(i: usize) -> Result<Pane> {
     _ = SHAutoComplete(edit, SHACF_FILESYS_DIRS | SHACF_AUTOSUGGEST_FORCE_ON | SHACF_AUTOAPPEND_FORCE_OFF);
     let filt = child(h, w!("EDIT"), w!(""), ES_AUTOHSCROLL as u32, plain, ID_FILTER, font);
     add_tip(filt, tr("Name filter (Ctrl+F) · icon or Alt+↓: file types", "이름 필터 (Ctrl+F) · 아이콘 또는 Alt+↓: 파일 종류"));
+    _ = SetWindowSubclass(filt, Some(filter_hint_proc), 4, 0);
+    name_fields(h, i);
 
     let eb: IExplorerBrowser = CoCreateInstance(&ExplorerBrowser, None, CLSCTX_INPROC_SERVER)?;
     let slot = Arc::new(AtomicUsize::new(i));
@@ -45,6 +47,49 @@ pub(crate) unsafe fn create_pane(i: usize) -> Result<Pane> {
     _ = RegisterDragDrop(h, &dt);
     let pending = Some(app(|a| a.s.cols[i].clone())); // the session's, for the first folder
     Ok(Pane { hwnd: h, eb, cookie, disp: String::new(), pending, settle: None, recover: None, icon: -1, ticket: 0, slot })
+}
+
+// Screen readers otherwise just say "edit", with no word on which of up to 16 panes; redone when a pane changes slot.
+unsafe fn name_fields(h: HWND, i: usize) {
+    let pane = format!("{} {}", tr("Pane", "패널"), i + 1);
+    a11y_name(GetDlgItem(Some(h), ID_EDIT).unwrap_or_default(), Some(&format!("{pane} {}", tr("address", "주소"))));
+    a11y_name(GetDlgItem(Some(h), ID_FILTER).unwrap_or_default(), Some(&format!("{pane} {}", tr("name filter (Ctrl+F)", "이름 필터 (Ctrl+F)"))));
+}
+
+// The name a screen reader reads for a control (Dynamic Annotation); None takes it off before the window goes.
+// Failing only loses the name.
+unsafe fn a11y_name(h: HWND, name: Option<&str>) {
+    let Ok(acc) = CoCreateInstance::<_, IAccPropServices>(&CLSID_AccPropServices, None, CLSCTX_INPROC_SERVER) else { return };
+    _ = match name {
+        Some(n) => acc.SetHwndPropStr(h, OBJID_CLIENT.0 as u32, CHILDID_SELF, PROPID_ACC_NAME, &HSTRING::from(n)),
+        None => acc.ClearHwndProps(h, OBJID_CLIENT.0 as u32, CHILDID_SELF, &[PROPID_ACC_NAME]),
+    };
+}
+
+// While the name filter is empty and not being typed in, it says what it is and how to get there,
+// in the field's own font and a muted colour that still reads at 4.5:1 or more on the pill in both themes.
+unsafe extern "system" fn filter_hint_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM, _: usize, _: usize) -> LRESULT {
+    let hint = msg == WM_PAINT && GetWindowTextLengthW(h) == 0 && GetFocus() != h;
+    if hint {
+        _ = InvalidateRect(Some(h), None, true); // a partial repaint would draw the hint twice over itself
+    }
+    let r = DefSubclassProc(h, msg, wp, lp);
+    if msg == WM_SETFOCUS || msg == WM_KILLFOCUS {
+        _ = InvalidateRect(Some(h), None, true);
+    } else if hint {
+        let dc = GetDC(Some(h));
+        let mut rc = RECT::default();
+        _ = GetClientRect(h, &mut rc);
+        rc.left += (SendMessageW(h, EM_GETMARGINS, None, None).0 & 0xffff) as i32;
+        let font = SelectObject(dc, HGDIOBJ(SendMessageW(h, WM_GETFONT, None, None).0 as _));
+        SetBkMode(dc, TRANSPARENT);
+        SetTextColor(dc, cref(blend(pal().sub, pal().text, 0.2)));
+        let mut hint: Vec<u16> = tr("Filter names  Ctrl+F", "이름 필터  Ctrl+F").encode_utf16().collect();
+        DrawTextW(dc, &mut hint, &mut rc, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
+        SelectObject(dc, font);
+        ReleaseDC(Some(h), dc);
+    }
+    r
 }
 
 pub(crate) unsafe fn destroy_pane(i: usize) {
@@ -66,6 +111,9 @@ pub(crate) unsafe fn destroy_pane(i: usize) {
         _ = p.eb.Unadvise(p.cookie);
         _ = IUnknown_SetSite(&p.eb, None);
         _ = p.eb.Destroy();
+        for id in [ID_EDIT, ID_FILTER] {
+            a11y_name(GetDlgItem(Some(p.hwnd), id).unwrap_or_default(), None);
+        }
         _ = DestroyWindow(p.hwnd);
         let waiting = unqueue(&mut icon_q(), p.hwnd.0 as isize);
         if let Some(pidl) = waiting {
@@ -769,6 +817,9 @@ pub(crate) unsafe fn swap_panes(i: usize, j: usize) {
     });
     for k in [i, j] {
         SEL_REV[k].fetch_add(1, Ordering::Relaxed);
+        if let Some(h) = app(|a| a.panes[k].as_ref().map(|p| p.hwnd)) {
+            name_fields(h, k);
+        }
     }
     NAV_GEN.fetch_add(1, Ordering::SeqCst); // a double-click pair that spans the move is dropped
     relayout();
