@@ -202,7 +202,7 @@ Alt+Shift+← / → / ↑ / ↓\tPane to the left / right / above / below\n\
 Alt+← / Alt+→\tBack / forward\n\
 Alt+↑\tParent folder\n\
 Alt+↓\tRecent folders (all panes, newest first)\n\
-Ctrl+L, Alt+D, F4\tAddress bar: also .. or a subfolder name, a file to open, or a command such as cmd, wt, powershell (runs in this pane's folder)\n\
+Ctrl+L, Alt+D, F4\tAddress bar: also .. or a subfolder name, a file to open, or a command such as cmd, wt, powershell (runs in this pane's folder), or part of a recent or favourite folder's name\n\
 Ctrl+B\tFavourites list (↑/↓ to choose, Enter to open, Del to remove)\n\
 Ctrl+/\tKeyboard shortcuts (this list)\n\
 Ctrl+Shift+M\tMaximize / restore the active pane (or double-click its header)\n\
@@ -234,7 +234,7 @@ Alt+Shift+← / → / ↑ / ↓\t왼쪽·오른쪽·위·아래 패널로 이동
 Alt+← / Alt+→\t뒤로 / 앞으로\n\
 Alt+↑\t상위 폴더\n\
 Alt+↓\t최근 폴더 (모든 패널, 최근 순)\n\
-Ctrl+L, Alt+D, F4\t주소창: .. 이나 하위 폴더 이름, 열 파일, cmd·wt·powershell 같은 명령도 가능(이 패널 폴더에서 실행)\n\
+Ctrl+L, Alt+D, F4\t주소창: .. 이나 하위 폴더 이름, 열 파일, cmd·wt·powershell 같은 명령도 가능(이 패널 폴더에서 실행), 다녀온 폴더·즐겨찾기 이름 일부\n\
 Ctrl+B\t즐겨찾기 목록 (↑/↓ 고르기, Enter 열기, Del 빼기)\n\
 Ctrl+/\t단축키 목록 (이 창)\n\
 Ctrl+Shift+M\t선택한 패널 크게 보기 / 복원 (머리줄 더블클릭도 가능)\n\
@@ -549,6 +549,27 @@ fn visit(list: &mut Vec<String>, old: &str, new: &str) {
 // The recent menu of a pane: everything but the folder it shows.
 fn recent_items(list: &[String], cur: &str) -> Vec<String> {
     list.iter().filter(|p| !p.eq_ignore_ascii_case(cur)).cloned().collect()
+}
+
+// Address bar text that names no path and runs nothing: the recent (newest first), then favourite folder whose
+// name is it, else starts with it, else holds it; never the folder on display. Like zoxide's `z name`.
+fn jump_pick<'a>(q: &str, recent: &'a [String], favs: &'a [String], cur: &str) -> Option<&'a str> {
+    let q = q.trim().to_lowercase();
+    if q.is_empty() || q.contains(['\\', '/', ':', '"']) {
+        return None;
+    }
+    let score = |p: &str| {
+        let n = short_name(p).to_lowercase();
+        if n == q { Some(0) } else if n.starts_with(&q) { Some(1) } else { n.contains(&q).then_some(2) }
+    };
+    let all = recent.iter().chain(favs).filter(|p| is_fs(p) && !p.eq_ignore_ascii_case(cur));
+    all.filter_map(|p| Some((score(p)?, p.as_str()))).min_by_key(|(s, _)| *s).map(|(_, p)| p)
+}
+
+// Enter in the address bar fell through (`done` None): a jump only if the text named no path at all;
+// a path that resolved but wouldn't open just beeps.
+fn addr_jumps(done: Option<bool>, resolved: bool) -> bool {
+    done.is_none() && !resolved
 }
 
 // A view's columns: visible ones in order with their widths, then the sort columns, each property as
@@ -1584,6 +1605,7 @@ unsafe fn go_edit(i: usize) {
         ShellExecuteExW(&mut sei).is_ok()
     };
     // Some(true) = browsed, Some(false) = opened or ran
+    let mut resolved = false;
     let done = 'go: {
         if let Some(p) = path {
             // std::path::absolute is GetFullPathNameW: folds `..` and `.`
@@ -1597,6 +1619,7 @@ unsafe fn go_edit(i: usize) {
                     run(SHELLEXECUTEINFOW { fMask: SEE_MASK_IDLIST | SEE_MASK_FLAG_NO_UI, lpIDList: pidl as _, ..Default::default() }).then_some(false)
                 };
                 CoTaskMemFree(Some(pidl as _));
+                resolved = true;
                 break 'go r;
             }
         }
@@ -1610,6 +1633,16 @@ unsafe fn go_edit(i: usize) {
     match done {
         Some(true) => focus_view(i),
         Some(false) => addr_reset(i, e),
+        None if addr_jumps(done, resolved) => match app(|a| jump_pick(&raw, &a.s.recent, &a.s.favs, &a.s.paths[i]).map(str::to_string)) {
+            // as the recent menu and favourites open a folder
+            Some(p) => {
+                if !go_near(i, &p) {
+                    _ = MessageBeep(MB_ICONWARNING);
+                }
+                focus_view(i);
+            }
+            None => _ = MessageBeep(MB_ICONWARNING),
+        },
         None => _ = MessageBeep(MB_ICONWARNING),
     }
 }
@@ -6386,6 +6419,30 @@ mod tests {
         assert!(r.is_none());
         let mut r = start(); // some other folder completed
         assert!(rec_step(&mut r, Nav::Complete, r"C:\x").is_none() && r.is_none());
+    }
+
+    #[test]
+    fn jump_picks() {
+        let v = |s: &[&str]| s.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let recent = v(&[r"C:\Users\me\Downloads", r"C:\Work\down", r"D:\Old Downloads", r"D:\문서\보고서 2026", THIS_PC]);
+        let favs = v(&[r"E:\Down", r"\\srv\share", r"C:\"]);
+        let pick = |q: &str, cur: &str| jump_pick(q, &recent, &favs, cur);
+        // exact beats prefix beats inside; ties go to recent before favourites, newer before older
+        assert_eq!(pick("down", ""), Some(r"C:\Work\down"));
+        assert_eq!(pick("DOWNL", ""), Some(r"C:\Users\me\Downloads"));
+        assert_eq!(pick("loads", ""), Some(r"C:\Users\me\Downloads"));
+        assert_eq!(pick("  down  ", r"c:\work\DOWN"), Some(r"E:\Down")); // the folder on display is skipped
+        assert_eq!(pick("보고", ""), Some(r"D:\문서\보고서 2026"));
+        assert_eq!(pick("share", ""), Some(r"\\srv\share"));
+        assert_eq!(pick("c", ""), Some(r"C:\")); // a drive root is named C:
+        assert_eq!(pick("this", ""), None); // shell places aren't candidates
+        for q in ["", "   ", r"down\x", "a/b", "c:", "\"down\"", "nothing"] {
+            assert_eq!(pick(q, ""), None, "{q:?}");
+        }
+        // only text that named no path falls to a jump; a resolved path that won't open just beeps
+        assert!(addr_jumps(None, false));
+        assert!(!addr_jumps(None, true));
+        assert!(!addr_jumps(Some(true), false) && !addr_jumps(Some(false), false));
     }
 
     #[test]
