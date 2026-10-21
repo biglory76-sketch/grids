@@ -7,7 +7,7 @@ use std::cell::{Cell, RefCell};
 use std::fmt::Display;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
-use std::sync::{Condvar, Mutex, Once, OnceLock};
+use std::sync::{Arc, Condvar, Mutex, Once, OnceLock};
 use std::time::{Duration, Instant};
 use windows::core::*;
 use windows::Win32::Foundation::*;
@@ -285,8 +285,8 @@ fn main() -> Result<()> {
         relayout();
         focus_view(app(|a| a.s.active));
         let file = app(|a| a.s.file.clone());
-        let base = std::fs::read_to_string(&file).ok().map(|t| Session::parse(&t));
-        app(|a| a.base = Some(base.unwrap_or_else(|| a.s.clone())));
+        let saved = std::fs::read_to_string(&file).ok();
+        app(|a| a.base = Some(startup_base(&a.s, saved.as_deref())));
         refresh_save_button();
         SetTimer(Some(main), TIMER_STATUS, 300, None);
         // taken by another app: the menu shows it off, s.hotkey stays on so the next start tries again
@@ -1462,5 +1462,89 @@ mod tests {
         assert!(!d.join("old.qdr").exists());
         assert_eq!(read("new.qdr"), "Q");
         _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn swap_slots_and_order() {
+        let mut s = Session { paths: ["A", "B", "C", "D"].iter().map(|p| p.to_string()).chain(vec![String::new(); MAXP - 4]).collect(), ..Default::default() };
+        (s.views[0], s.cols[0], s.tints[0], s.active) = ((4, 16), "x".into(), 2, 0);
+        let mut t = s.clone();
+        t.swap_slots(0, 2);
+        assert_eq!((&t.paths[..4], t.views[2], t.cols[2].as_str(), t.tints[2], t.active), (&["C", "B", "A", "D"].map(String::from)[..], (4, 16), "x", 2, 2));
+        t.swap_slots(1, 1);
+        assert_eq!(t.paths[1], "B");
+        assert_eq!(t.active, 2);
+        // the order goes through grids.ini; anything but a full permutation of the slots is dropped
+        let mut cur = s.clone();
+        swap_in(&mut cur, None, 0, 2);
+        assert_eq!(cur.order[..4], [2, 1, 0, 3]);
+        assert_eq!(Session::parse(&cur.to_ini()).order, cur.order);
+        let ord = |v: &str| Session::parse(&format!("order={v}\n")).order;
+        let ok = (0..MAXP).rev().map(|k| k.to_string()).collect::<Vec<_>>().join(",");
+        assert_eq!(ord(&ok).len(), MAXP);
+        for bad in ["0,0,2,3,4,5,6,7,8,9,10,11,12,13,14,15", "0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,16", "1,0,2,3", "", "x"] {
+            assert!(ord(bad).is_empty(), "{bad}");
+        }
+        assert!(!s.to_ini().contains("order="));
+        // never in a session file, and a loaded one starts as saved
+        assert!(!cur.snapshot().contains("order="));
+        let mut l = cur.clone();
+        l.take_layout(&s);
+        assert!(l.order.is_empty());
+        // swapping back is no move at all
+        swap_in(&mut cur, None, 2, 0);
+        assert!(cur.order.is_empty() && cur.paths == s.paths);
+    }
+
+    #[test]
+    fn swap_dot_survives_restart() {
+        // a session file in the temp folder, and one that has been deleted
+        let dir = std::env::temp_dir().join(format!("grids-swap-{}", std::process::id()));
+        _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let gone = dir.join("gone.grids");
+        std::fs::write(&gone, "cols=2,2\n").unwrap();
+        std::fs::remove_file(&gone).unwrap();
+        // what check_dirty does each tick: fill the baseline's unknown columns, then compare
+        let tick = |cur: &Session, base: &mut Session| {
+            for i in 0..cur.panes() {
+                if base.cols[i].is_empty() {
+                    base.cols[i] = cur.cols[i].clone();
+                }
+            }
+            session_dirty(cur, Some(base))
+        };
+        for differ in [false, true] {
+            let mut s = Session { paths: ["A", "B", "C", "D"].iter().map(|p| p.to_string()).chain(vec![String::new(); MAXP - 4]).collect(), ..Default::default() };
+            s.views = vec![(4, 16); MAXP];
+            s.cols = vec!["c".into(); MAXP];
+            if differ {
+                (s.views[0], s.cols[0], s.tints[0]) = ((1, 48), "x".into(), 3);
+                (s.views[2], s.cols[2]) = ((6, 96), "y".into());
+            }
+            let file = dir.join("s.grids");
+            std::fs::write(&file, s.snapshot()).unwrap();
+            for path in [file.clone(), PathBuf::new(), gone.clone()] {
+                let mut cur = Session { file: path.to_string_lossy().into_owned(), ..s.clone() };
+                let mut base = cur.clone();
+                assert!(!tick(&cur, &mut base));
+                swap_in(&mut cur, Some(&mut base), 0, 2);
+                assert!(!layout_differs(&cur, &base) && tick(&cur, &mut base));
+                // restart: grids.ini back in, the baseline from the session file (if there is one) in this order
+                let mut cur = Session::parse(&cur.to_ini());
+                let mut base = startup_base(&cur, std::fs::read_to_string(&cur.file).ok().as_deref());
+                assert!(!layout_differs(&cur, &base), "{differ} {path:?}");
+                assert!(tick(&cur, &mut base) && tick(&cur, &mut base), "{differ} {path:?}");
+                let mut kept = (cur.clone(), base.clone());
+                swap_in(&mut cur, Some(&mut base), 2, 0);
+                assert!(!tick(&cur, &mut base) && !tick(&cur, &mut base), "{differ} {path:?}");
+                assert_eq!(cur.paths, s.paths);
+                // a save: the file has them where they are now
+                kept.0.order.clear();
+                kept.1 = kept.0.clone();
+                assert!(!tick(&kept.0, &mut kept.1));
+            }
+        }
+        _ = std::fs::remove_dir_all(&dir);
     }
 }

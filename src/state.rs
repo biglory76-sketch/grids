@@ -13,6 +13,7 @@ pub(crate) struct Pane {
     pub(crate) recover: Option<(String, String)>, // missing folder, parent being opened instead (go_near)
     pub(crate) icon: i32,   // current folder's icon in the system image list, -1 = none (yet)
     pub(crate) ticket: u32, // its lookup (WM_PANE_ICON); 0 = none asked
+    pub(crate) slot: Arc<AtomicUsize>, // where it is now (swap_panes moves it); its Explorer callbacks read it
 }
 
 pub(crate) struct App {

@@ -24,6 +24,7 @@ pub(crate) struct Session {
     pub(crate) ko: bool,               // Korean UI
     pub(crate) cols: Vec<String>,      // per pane: columns and sort of its view (cols_text)
     pub(crate) tints: Vec<u8>,         // per pane: colour label, 0 = none, 1..=6 = selection colour preset (this theme's)
+    pub(crate) order: Vec<u8>,         // slot i shows the pane slot order[i] held when the session was last saved / loaded; empty = as saved (grids.ini only)
 }
 
 impl Default for Session {
@@ -49,6 +50,7 @@ impl Default for Session {
             ko: false,
             cols: vec![String::new(); MAXP],
             tints: vec![0; MAXP],
+            order: Vec::new(),
         }
     }
 }
@@ -136,6 +138,15 @@ impl Session {
                 "lang" => s.ko = v.trim() == "ko",
                 "session" => s.file = v.trim().to_string(),
                 "fav" if !v.trim().is_empty() => s.favs.push(v.trim().to_string()),
+                // older Grids skip it (no p/v/c/t slot key); anything but a full permutation is ignored
+                "order" => {
+                    let o: Vec<u8> = nums(v);
+                    let mut sorted = o.clone();
+                    sorted.sort();
+                    if sorted.into_iter().eq(0..MAXP as u8) {
+                        s.order = o;
+                    }
+                }
                 "recent" if !v.trim().is_empty() && s.recent.len() < RECENT => s.recent.push(v.trim().to_string()),
                 _ => {
                     if let Some(i) = slot('p') {
@@ -174,6 +185,9 @@ impl Session {
         if !self.file.is_empty() {
             o += &format!("session={}\n", self.file);
         }
+        if !self.order.is_empty() {
+            o += &format!("order={}\n", join(&self.order));
+        }
         for f in &self.favs {
             o += &format!("fav={f}\n");
         }
@@ -203,7 +217,7 @@ impl Session {
 
     /// What goes into a named session file: no window position, no pointer to itself, no favourites or recent folders.
     pub(crate) fn snapshot(&self) -> String {
-        Session { win: None, file: String::new(), favs: Vec::new(), recent: Vec::new(), ..self.clone() }.to_ini()
+        Session { win: None, file: String::new(), favs: Vec::new(), recent: Vec::new(), order: Vec::new(), ..self.clone() }.to_ini()
     }
 
     /// Takes grid + folders from a named session; window position and sidebar width stay as they are.
@@ -211,6 +225,70 @@ impl Session {
         (self.heights, self.colr, self.rowr) = (o.heights.clone(), o.colr.clone(), o.rowr.clone());
         (self.active, self.paths, self.views, self.cols) = (o.active, o.paths.clone(), o.views.clone(), o.cols.clone());
         self.tints = o.tints.clone();
+        self.order.clear();
+    }
+
+    /// Slots i and j trade folders, views, columns and labels; the active pane goes with its slot.
+    pub(crate) fn swap_slots(&mut self, i: usize, j: usize) {
+        self.paths.swap(i, j);
+        self.views.swap(i, j);
+        self.cols.swap(i, j);
+        self.tints.swap(i, j);
+        if self.active == i {
+            self.active = j;
+        } else if self.active == j {
+            self.active = i;
+        }
+    }
+
+    /// Slot i takes what slot order[i] held; an empty order leaves everything where it is.
+    pub(crate) fn reorder(&mut self, order: &[u8]) {
+        if order.len() != MAXP {
+            return;
+        }
+        let old = self.clone();
+        for (i, &k) in order.iter().enumerate() {
+            let k = k as usize;
+            (self.paths[i], self.views[i], self.cols[i], self.tints[i]) = (old.paths[k].clone(), old.views[k], old.cols[k].clone(), old.tints[k]);
+        }
+    }
+}
+
+/// Panes i and j trade places in the current state and in the save baseline (so the two still line up pane
+/// by pane); the current order notes the move, which the session file doesn't know about.
+pub(crate) fn swap_in(cur: &mut Session, base: Option<&mut Session>, i: usize, j: usize) {
+    cur.swap_slots(i, j);
+    if let Some(b) = base {
+        b.swap_slots(i, j);
+    }
+    if cur.order.is_empty() {
+        cur.order = (0..MAXP as u8).collect();
+    }
+    cur.order.swap(i, j);
+    if !moved(&cur.order) {
+        cur.order.clear();
+    }
+}
+
+fn moved(order: &[u8]) -> bool {
+    order.iter().enumerate().any(|(k, &o)| k != o as usize)
+}
+
+/// The save dot: panes moved away from where the session file has them, or a layout change.
+pub(crate) fn session_dirty(cur: &Session, base: Option<&Session>) -> bool {
+    moved(&cur.order) || base.is_some_and(|b| layout_differs(cur, b))
+}
+
+/// Baseline at startup: the session file as saved, put into the panes' current order. No file, or an
+/// unreadable one: the current state, and the order alone keeps the dot on.
+pub(crate) fn startup_base(cur: &Session, saved: Option<&str>) -> Session {
+    match saved {
+        Some(t) => {
+            let mut b = Session::parse(t);
+            b.reorder(&cur.order);
+            b
+        }
+        None => cur.clone(),
     }
 }
 

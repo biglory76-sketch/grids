@@ -53,6 +53,12 @@ pub(crate) unsafe fn key(m: &MSG) -> bool {
             VK_UP => move_pane(0, -1),
             _ => move_pane(0, 1),
         },
+        k @ (VK_LEFT | VK_RIGHT | VK_UP | VK_DOWN) if alt && shift && ctrl => match k {
+            VK_LEFT => swap_dir(-1, 0),
+            VK_RIGHT => swap_dir(1, 0),
+            VK_UP => swap_dir(0, -1),
+            _ => swap_dir(0, 1),
+        },
         VK_LEFT if alt => browse(a, SBSP_NAVIGATEBACK),
         VK_RIGHT if alt => browse(a, SBSP_NAVIGATEFORWARD),
         VK_UP if alt => browse(a, SBSP_PARENT),

@@ -65,6 +65,7 @@ pub(crate) unsafe fn write_session(path: &Path) {
     }
     app(|a| {
         a.s.file = path.to_string_lossy().into_owned();
+        a.s.order.clear(); // the file now has the panes where they are
         (a.base, a.dirty) = (Some(a.s.clone()), false);
     });
     refresh_save_button();
@@ -280,7 +281,7 @@ pub(crate) unsafe fn check_dirty() {
                 }
             }
         }
-        let d = a.base.as_ref().is_some_and(|b| layout_differs(&a.s, b));
+        let d = session_dirty(&a.s, a.base.as_ref());
         std::mem::replace(&mut a.dirty, d) != d
     });
     if changed {

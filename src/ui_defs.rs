@@ -173,6 +173,7 @@ pub(crate) const FILE_KINDS: [(&str, &str, &str); 6] = [
 pub(crate) const KEYS_EN: &str = "Ctrl+Tab / Ctrl+Shift+Tab\tNext / previous pane\n\
 Ctrl+1 … Ctrl+9\tGo to pane 1–9 (the number at the left of each pane header; hidden in very narrow panes)\n\
 Alt+Shift+← / → / ↑ / ↓\tPane to the left / right / above / below\n\
+Ctrl+Alt+Shift+← / → / ↑ / ↓\tSwap the active pane with the one to the left / right / above / below (folder, history and selection stay; also in the ⇄ menu)\n\
 Alt+← / Alt+→\tBack / forward\n\
 Alt+↑\tParent folder\n\
 Alt+↓\tRecent folders (all panes, newest first)\n\
@@ -209,6 +210,7 @@ If Grids is already running, they open in that window.";
 pub(crate) const KEYS_KO: &str = "Ctrl+Tab / Ctrl+Shift+Tab\t다음 / 이전 패널\n\
 Ctrl+1 … Ctrl+9\t1~9번 패널로 이동 (패널 머리줄 왼쪽의 번호, 아주 좁은 패널에서는 생략)\n\
 Alt+Shift+← / → / ↑ / ↓\t왼쪽·오른쪽·위·아래 패널로 이동\n\
+Ctrl+Alt+Shift+← / → / ↑ / ↓\t지금 패널을 왼쪽·오른쪽·위·아래 패널과 자리 바꾸기 (폴더·방문 기록·선택 유지, ⇄ 메뉴에도 있음)\n\
 Alt+← / Alt+→\t뒤로 / 앞으로\n\
 Alt+↑\t상위 폴더\n\
 Alt+↓\t최근 폴더 (모든 패널, 최근 순)\n\
