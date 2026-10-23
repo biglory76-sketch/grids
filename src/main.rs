@@ -214,6 +214,13 @@ fn main() -> Result<()> {
             lpszClassName: w!("GridsPeek"),
             ..Default::default()
         });
+        RegisterClassW(&WNDCLASSW {
+            lpfnWndProc: Some(peek_host_proc),
+            hInstance: hinst,
+            hCursor: arrow,
+            lpszClassName: w!("GridsPeekHost"),
+            ..Default::default()
+        });
         KO.store(s.ko, Ordering::Relaxed);
         TABS_ON.store(s.tabs_on, Ordering::Relaxed);
         let view_menu = make_menus()?;
@@ -1099,14 +1106,14 @@ mod tests {
     #[test]
     fn peek_newest_only() {
         let req = |p: &str| Some(PeekReq { path: p.into(), w: 10, h: 10, hwnd: 0, plain: false });
-        let pix = || (Body::Pic(Pix { w: 1, h: 1, bgra: vec![0; 4] }), Some(3));
-        let card = || (Body::Card { icon: None, rows: Vec::new() }, None);
+        let pix = || Peeked { body: Body::Pic(Pix { w: 1, h: 1, bgra: vec![0; 4] }), icon: -1, meta: Vec::new() };
+        let card = || Peeked { body: Body::Card { icon: None, rows: Vec::new() }, icon: -1, meta: Vec::new() };
         let mut j = PeekJob { gen: 0, req: None, done: None };
         j.want(req("a"));
         let a = j.gen;
         j.want(req("b")); // arrow pressed before a's picture came
         assert!(!j.publish(a, pix()) && j.done.is_none()); // a's picture is dropped
-        assert!(j.publish(j.gen, card()) && matches!(j.done, Some((Body::Card { .. }, None)))); // b: the facts only
+        assert!(j.publish(j.gen, card()) && matches!(j.done, Some(Peeked { body: Body::Card { .. }, .. }))); // b: the facts only
         let b = j.gen;
         j.want(None); // closed
         assert!(j.gen != b && j.req.is_none() && j.done.is_none());
@@ -1948,5 +1955,24 @@ mod tests {
         assert_eq!(wheel_action(500, 500, true, false), Hold);
         assert_eq!(wheel_action(500, 500, true, true), Step);
         assert_eq!(wheel_action(500, 500, false, true), Scroll); // back up is still scrolling
+    }
+
+    #[test]
+    fn peek_layout() {
+        let rc = RECT { left: 0, top: 0, right: 1120, bottom: 810 };
+        let g = peek_geo(rc, 96);
+        // header 48 high; stage between 56 px side margins; plate padding 20
+        assert_eq!((g.stage.left, g.stage.top, g.stage.right, g.stage.bottom), (56, 48, 1064, 786));
+        assert_eq!((g.inner.left, g.inner.top), (76, 68));
+        assert!(g.close.right <= rc.right && g.close.bottom <= 48 && g.title.right < g.close.left);
+        // the arrows sit in the side margins, centred on the stage
+        assert!(g.prev.right <= g.stage.left && g.next.left >= g.stage.right);
+        assert_eq!((g.prev.top + g.prev.bottom) / 2, (g.stage.top + g.stage.bottom) / 2);
+        assert_eq!(peek_hit(&g, g.next.left + 4, g.next.top + 4), Hot::Next);
+        assert_eq!(peek_hit(&g, g.prev.left + 4, g.prev.top + 4), Hot::Prev);
+        assert_eq!(peek_hit(&g, g.close.left + 4, g.close.top + 4), Hot::Close);
+        assert_eq!(peek_hit(&g, 500, 400), Hot::None); // content: no action
+        assert_eq!(group_digits(30360942), "30,360,942");
+        assert_eq!(group_digits(999), "999");
     }
 }

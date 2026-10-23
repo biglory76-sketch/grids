@@ -146,6 +146,9 @@ pub(crate) fn on_color(bg: u32) -> u32 {
 // Segoe Fluent Icons / MDL2 Assets code points
 pub(crate) const ICON_SEARCH: &str = "\u{E721}";
 pub(crate) const ICON_FILTER: &str = "\u{E71C}";
+pub(crate) const ICON_CLOSE: &str = "\u{E711}";
+pub(crate) const ICON_PREV: &str = "\u{E76B}";
+pub(crate) const ICON_NEXT: &str = "\u{E76C}";
 
 pub(crate) fn glyph(id: i32) -> &'static str {
     match id {
