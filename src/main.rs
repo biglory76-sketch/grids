@@ -23,7 +23,7 @@ use windows::Win32::System::Ole::*;
 use windows::Win32::System::SystemServices::{MK_CONTROL, MK_SHIFT, MODIFIERKEYS_FLAGS, SFGAO_FLAGS, SFGAO_FOLDER, SFGAO_STREAM};
 use windows::Win32::System::Threading::{CreateEventW, SetEvent, OpenProcess, INFINITE,QueryFullProcessImageNameW, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION};
 use windows::Win32::System::Variant::{VariantClear, VARIANT, VT_I4};
-use windows::Win32::UI::Accessibility::{AccessibleObjectFromPoint, CLSID_AccPropServices, IAccPropServices, IAccessible, PROPID_ACC_NAME, ROLE_SYSTEM_LIST};
+use windows::Win32::UI::Accessibility::{AccessibleObjectFromPoint, CLSID_AccPropServices, IAccPropServices, IAccessible, PROPID_ACC_NAME, ROLE_SYSTEM_LIST, ROLE_SYSTEM_LISTITEM};
 use windows::Win32::UI::Controls::Dialogs::{ChooseColorW, CC_FULLOPEN, CC_RGBINIT, CHOOSECOLORW};
 use windows::Win32::UI::Controls::{
     SetWindowTheme, BeginBufferedPaint, BufferedPaintInit, EndBufferedPaint, BPBF_TOPDOWNDIB, DRAWITEMSTRUCT, ODS_SELECTED, TOOLTIPS_CLASSW,
@@ -613,8 +613,8 @@ mod tests {
         // a navigation between the clicks
         assert!(!next(p, Click { gen: 2, ..c(200, 10, 10) }, true).1);
 
-        assert!(bg_role(33));
-        assert!([34, 20, 43, 25, 3].iter().all(|&r| !bg_role(r)));
+        assert!(bg_role(33) && bg_role(34));
+        assert!([20, 43, 25, 3].iter().all(|&r| !bg_role(r)));
 
         // a navigation during the probe voids it; g0 is the value before
         let g = Cell::new(5);
