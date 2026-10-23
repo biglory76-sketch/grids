@@ -26,6 +26,9 @@ pub(crate) struct Session {
     pub(crate) cols: Vec<String>,      // per pane: columns and sort of its view (cols_text)
     pub(crate) tints: Vec<u8>,         // per pane: colour label, 0 = none, 1..=6 = selection colour preset (this theme's)
     pub(crate) order: Vec<u8>,         // slot i shows the pane slot order[i] held when the session was last saved / loaded; empty = as saved (grids.ini only)
+    pub(crate) tabs_on: bool,          // tab strips shown (View menu), app-wide; the tabs themselves are kept while off
+    pub(crate) tabs: Vec<Vec<String>>, // per pane: its tabs' folders; the current one's entry is stale, paths[i] is the truth. <2 = no tabs
+    pub(crate) tab: Vec<usize>,        // per pane: current tab
 }
 
 impl Default for Session {
@@ -53,6 +56,9 @@ impl Default for Session {
             cols: vec![String::new(); MAXP],
             tints: vec![0; MAXP],
             order: Vec::new(),
+            tabs_on: false,
+            tabs: vec![Vec::new(); MAXP],
+            tab: vec![0; MAXP],
         }
     }
 }
@@ -138,6 +144,7 @@ impl Session {
                 "dblup" => s.dblup = v.trim() != "0",
                 "tree" => s.tree = v.trim() != "0",
                 "hotkey" => s.hotkey = v.trim() != "0",
+                "tabs" => s.tabs_on = v.trim() == "1",
                 "lang" => s.ko = v.trim() == "ko",
                 "session" => s.file = v.trim().to_string(),
                 "fav" if !v.trim().is_empty() => s.favs.push(v.trim().to_string()),
@@ -158,6 +165,15 @@ impl Session {
                         s.views[i] = (*m, *z);
                     } else if let Some(i) = slot('c') {
                         s.cols[i] = v.trim().to_string();
+                    } else if let Some(i) = slot('b') {
+                        // b3=1|C:\a|D:\b : current tab, then every tab's folder ('|' is never in a path)
+                        let mut it = v.split('|');
+                        let cur = it.next().and_then(|c| c.trim().parse::<usize>().ok()).unwrap_or(0);
+                        let list: Vec<String> = it.filter(|p| !p.is_empty()).map(String::from).collect();
+                        if list.len() > 1 {
+                            s.tab[i] = cur.min(list.len() - 1);
+                            s.tabs[i] = list;
+                        }
                     } else if let Some(i) = slot('t') {
                         s.tints[i] = v.trim().parse().ok().filter(|&k| k <= 6).unwrap_or(0);
                     }
@@ -185,6 +201,7 @@ impl Session {
         o += &format!("accent={:06X}\naccent_dark={:06X}\ndark={}\n", self.accent, self.accent_dark, self.dark as u8);
         o += &format!("follow_theme={}\n", self.follow as u8);
         o += &format!("dblup={}\ntree={}\nhotkey={}\n", self.dblup as u8, self.tree as u8, self.hotkey as u8);
+        o += &format!("tabs={}\n", self.tabs_on as u8);
         o += &format!("lang={}\n", if self.ko { "ko" } else { "en" });
         if !self.file.is_empty() {
             o += &format!("session={}\n", self.file);
@@ -211,6 +228,10 @@ impl Session {
             if self.tints[i] != 0 {
                 o += &format!("t{i}={}\n", self.tints[i]);
             }
+            let tabs = self.tab_list(i);
+            if tabs.len() > 1 {
+                o += &format!("b{i}={}|{}\n", self.tab[i], tabs.join("|"));
+            }
         }
         o
     }
@@ -229,6 +250,7 @@ impl Session {
         (self.heights, self.colr, self.rowr) = (o.heights.clone(), o.colr.clone(), o.rowr.clone());
         (self.active, self.paths, self.views, self.cols) = (o.active, o.paths.clone(), o.views.clone(), o.cols.clone());
         self.tints = o.tints.clone();
+        (self.tabs, self.tab) = (o.tabs.clone(), o.tab.clone());
         self.order.clear();
     }
 
@@ -238,6 +260,8 @@ impl Session {
         self.views.swap(i, j);
         self.cols.swap(i, j);
         self.tints.swap(i, j);
+        self.tabs.swap(i, j);
+        self.tab.swap(i, j);
         if self.active == i {
             self.active = j;
         } else if self.active == j {
@@ -254,7 +278,60 @@ impl Session {
         for (i, &k) in order.iter().enumerate() {
             let k = k as usize;
             (self.paths[i], self.views[i], self.cols[i], self.tints[i]) = (old.paths[k].clone(), old.views[k], old.cols[k].clone(), old.tints[k]);
+            (self.tabs[i], self.tab[i]) = (old.tabs[k].clone(), old.tab[k]);
         }
+    }
+}
+
+impl Session {
+    /// Pane i's tabs as they are now: the current one is the folder on display. One tab when it has none.
+    pub(crate) fn tab_list(&self, i: usize) -> Vec<String> {
+        let mut t = self.tabs[i].clone();
+        match self.tab[i] {
+            k if t.len() > 1 && k < t.len() => t[k] = self.paths[i].clone(),
+            _ => t = vec![self.paths[i].clone()],
+        }
+        t
+    }
+
+    /// Ctrl+T: a copy of the current tab right after it, made current. Nothing to browse, it is the same folder.
+    pub(crate) fn add_tab(&mut self, i: usize) {
+        let mut t = self.tab_list(i);
+        let k = self.tab[i].min(t.len() - 1) + 1;
+        t.insert(k, self.paths[i].clone());
+        (self.tabs[i], self.tab[i]) = (t, k);
+    }
+
+    /// Tab k becomes current: the folder to browse to, None when it already is (or there is no such tab).
+    pub(crate) fn pick_tab(&mut self, i: usize, k: usize) -> Option<String> {
+        let t = self.tab_list(i);
+        if k >= t.len() || k == self.tab[i] {
+            return None;
+        }
+        let to = t[k].clone();
+        (self.tabs[i], self.tab[i]) = (t, k);
+        Some(to)
+    }
+
+    /// Closes tab k; the last one stays. Closing the current one moves to its right neighbour (else its left):
+    /// that folder to browse to.
+    pub(crate) fn close_tab(&mut self, i: usize, k: usize) -> Option<String> {
+        let mut t = self.tab_list(i);
+        if t.len() < 2 || k >= t.len() {
+            return None;
+        }
+        let cur = self.tab[i];
+        t.remove(k);
+        let (next, go) = match k.cmp(&cur) {
+            std::cmp::Ordering::Less => (cur - 1, None),
+            std::cmp::Ordering::Greater => (cur, None),
+            std::cmp::Ordering::Equal => {
+                let n = k.min(t.len() - 1);
+                (n, Some(t[n].clone()))
+            }
+        };
+        (self.tabs[i], self.tab[i]) = if t.len() > 1 { (t, next) } else { (Vec::new(), 0) };
+        go
     }
 }
 

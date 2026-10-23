@@ -30,6 +30,7 @@ pub(crate) const ID_TREE: usize = 1107;
 pub(crate) const ID_EXT: usize = 1108;
 pub(crate) const ID_HOTKEY: usize = 1109;
 pub(crate) const ID_FOLLOW: usize = 1110;
+pub(crate) const ID_TABS: usize = 1111;
 pub(crate) const HOME: &str = "https://github.com/efww/grids";
 pub(crate) const ID_ACCENT: usize = 1400; // + preset index
 pub(crate) const ID_ACCENT_PICK: usize = 1410;
@@ -102,6 +103,7 @@ pub(crate) const DARK: Palette = Palette {
 
 pub(crate) static DARK_ON: AtomicBool = AtomicBool::new(false);
 pub(crate) static KO: AtomicBool = AtomicBool::new(false);
+pub(crate) static TABS_ON: AtomicBool = AtomicBool::new(false); // copy of Session::tabs_on for pane_geo
 
 /// UI text: English unless Korean is picked in the view menu (the Explorer parts follow Windows).
 pub(crate) fn tr(en: &'static str, ko: &'static str) -> &'static str {
@@ -190,10 +192,13 @@ Num−\tDeselect files by pattern\n\
 Num*\tInvert the selection\n\
 Ctrl+F\tFilter (*.pdf;*.txt or part of a name; folders always show)\n\
 Alt+↓ in the filter\tFile types: pictures, videos, documents ... (or click the filter's icon)\n\
+Ctrl+T / Ctrl+W\tNew tab (same folder) / close tab, with tabs on (View menu)\n\
+Ctrl+PgDn / Ctrl+PgUp\tNext / previous tab\n\
+F7\tNew folder\n\
 F6 / Shift+F6\tMove between file list, address bar, filter and folder tree\n\
 Enter / Esc\tApply / cancel the address or filter\n\
 Ctrl+H\tShow hidden files\n\
-F3\tQuick preview of the focused file (arrows: previous / next, Esc: close)\n\
+F3\tQuick preview of the focused file (arrows: previous / next file without closing, Esc: close)\n\
 Ctrl+V\tWith a copied picture (screenshot, browser image): save it here as a PNG file\n\
 F1\tHelp (opens the README on GitHub)\n\
 Win+Alt+E\tBring Grids to front from any app (again: minimize)\n\
@@ -206,6 +211,7 @@ Load: pick a saved session by its layout preview\n\
 Drive buttons (C: D: …): open that drive in the active pane; its drive is underlined\n\
 Double-click a splitter: split evenly\n\
 Right-click a pane header: colour label (saved with the session)\n\
+Tabs: click to switch, × or middle-click to close, + or double-click the empty strip for a new tab\n\
 Arguments: grids.exe C:\\a D:\\b ... or grids.exe work.grids\n\
 If Grids is already running, they open in that window.";
 
@@ -228,10 +234,13 @@ Num−\t패턴으로 파일 선택 해제\n\
 Num*\t선택 반전\n\
 Ctrl+F\t필터 (*.pdf;*.txt 또는 이름 일부, 폴더는 항상 표시)\n\
 필터 칸에서 Alt+↓\t파일 종류: 사진·동영상·문서 … (필터 칸 아이콘 클릭도 가능)\n\
+Ctrl+T / Ctrl+W\t새 탭(같은 폴더) / 탭 닫기, 탭을 켰을 때 (보기 메뉴)\n\
+Ctrl+PgDn / Ctrl+PgUp\t다음 / 이전 탭\n\
+F7\t새 폴더\n\
 F6 / Shift+F6\t파일 목록·주소창·필터·폴더 트리 사이 이동\n\
 Enter / Esc\t주소창·필터 적용 / 취소\n\
 Ctrl+H\t숨김 파일 표시\n\
-F3\t포커스한 파일 빠른 미리보기 (방향키: 이전·다음, Esc: 닫기)\n\
+F3\t포커스한 파일 빠른 미리보기 (방향키: 닫지 않고 이전·다음 파일, Esc: 닫기)\n\
 Ctrl+V\t복사한 그림(스크린샷, 브라우저 이미지)이 있으면 이 폴더에 PNG 파일로 저장\n\
 F1\t도움말 (GitHub README 열기)\n\
 Win+Alt+E\t어디서나 Grids 앞으로 (다시 누르면 최소화)\n\
@@ -244,5 +253,6 @@ F2, Del, Ctrl+C/X/V, F5\t탐색기와 동일\n\n\
 드라이브 버튼 (C: D: …): 지금 패널에서 그 드라이브 열기, 지금 패널의 드라이브에 밑줄\n\
 스플리터 더블클릭: 균등 분할\n\
 패널 머리줄 오른쪽 클릭: 패널 색 라벨 (세션에 저장)\n\
+탭: 클릭 = 전환, × 또는 가운데 클릭 = 닫기, + 또는 탭 줄 빈 곳 더블클릭 = 새 탭\n\
 실행 인자: grids.exe C:\\a D:\\b ... 또는 grids.exe 작업.grids\n\
 이미 실행 중이면 그 창에서 엽니다.";

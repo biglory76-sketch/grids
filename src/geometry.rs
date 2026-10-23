@@ -154,12 +154,14 @@ pub(crate) struct PaneGeo {
     pub(crate) addr: RECT,
     pub(crate) filt: RECT,
     pub(crate) fav: RECT,
+    pub(crate) tabs: RECT, // tab strip between the bar and the list; empty while tabs are off
     pub(crate) view: RECT,
 }
 
 pub(crate) fn pane_geo(w: i32, h: i32, dpi: i32) -> PaneGeo {
     let s = |v: i32| v * dpi / 96;
     let (bar, bh, b, pad) = (s(30), s(22), s(24), s(4));
+    let strip = tab_strip_h(dpi);
     let y = (bar - bh) / 2;
     let r = |x: i32, wd: i32| RECT { left: x, top: y, right: x + wd.max(0), bottom: y + bh };
     let fav = r(w - pad - b, b);
@@ -177,9 +179,36 @@ pub(crate) fn pane_geo(w: i32, h: i32, dpi: i32) -> PaneGeo {
         addr: r(addr_x, open.left - s(4) - addr_x),
         filt,
         fav,
+        tabs: RECT { left: s(2), top: bar, right: w - s(2), bottom: bar + strip },
         // 2px in, so the active ring stays visible around the list
-        view: RECT { left: s(2), top: bar, right: w - s(2), bottom: h - s(2) },
+        view: RECT { left: s(2), top: bar + strip, right: w - s(2), bottom: h - s(2) },
     }
+}
+
+pub(crate) fn tab_strip_h(dpi: i32) -> i32 {
+    if TABS_ON.load(Ordering::Relaxed) { 26 * dpi / 96 } else { 0 }
+}
+
+// Tabs share the strip evenly up to a comfortable width, then a '+' after the last. (tabs, '+')
+pub(crate) fn tab_rects(strip: RECT, n: usize, dpi: i32) -> (Vec<RECT>, RECT) {
+    let s = |v: i32| v * dpi / 96;
+    let (pad, plus) = (s(4), s(24));
+    let room = (strip.right - strip.left - 2 * pad - plus).max(0);
+    let w = (room / n.max(1) as i32).min(s(170));
+    let tab = |k: i32| RECT { left: strip.left + pad + k * w, top: strip.top + s(3), right: strip.left + pad + (k + 1) * w, bottom: strip.bottom };
+    let tabs: Vec<RECT> = (0..n as i32).map(tab).collect();
+    let x = tabs.last().map_or(strip.left + pad, |r| r.right);
+    (tabs, RECT { left: x, top: strip.top + s(3), right: x + plus, bottom: strip.bottom })
+}
+
+// The × on a tab, at its right end; only on tabs wide enough to keep some name.
+pub(crate) fn tab_close_rect(tab: RECT, dpi: i32) -> Option<RECT> {
+    let s = |v: i32| v * dpi / 96;
+    (tab.right - tab.left >= s(64)).then(|| RECT { left: tab.right - s(22), right: tab.right - s(4), ..tab })
+}
+
+pub(crate) fn inside(r: RECT, x: i32, y: i32) -> bool {
+    x >= r.left && x < r.right && y >= r.top && y < r.bottom
 }
 
 // The search icon / filter chip at the filter pill's left, where the edit doesn't reach (it starts at s(24)).

@@ -62,6 +62,7 @@ mod keys_window;
 mod paste;
 mod select_pattern;
 mod keyboard;
+mod tabs;
 mod window_ui;
 
 use ui_defs::*;
@@ -86,6 +87,7 @@ use keys_window::*;
 use paste::*;
 use select_pattern::*;
 use keyboard::*;
+use tabs::*;
 use window_ui::*;
 
 fn main() -> Result<()> {
@@ -209,6 +211,7 @@ fn main() -> Result<()> {
             ..Default::default()
         });
         KO.store(s.ko, Ordering::Relaxed);
+        TABS_ON.store(s.tabs_on, Ordering::Relaxed);
         let view_menu = make_menus()?;
         let main = CreateWindowExW(
             WINDOW_EX_STYLE(0),
@@ -1733,5 +1736,73 @@ mod tests {
             }
         }
         _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn tabs_model() {
+        let mut s = Session::default();
+        s.paths[0] = r"C:\a".into();
+        assert_eq!(s.tab_list(0), vec![r"C:\a"]);
+        assert_eq!(s.close_tab(0, 0), None); // the last tab stays
+        s.add_tab(0);
+        assert_eq!((s.tab_list(0).len(), s.tab[0]), (2, 1));
+        s.paths[0] = r"C:\b".into(); // the new tab browsed on
+        assert_eq!(s.tab_list(0), vec![r"C:\a", r"C:\b"]);
+        assert_eq!(s.pick_tab(0, 0).as_deref(), Some(r"C:\a"));
+        assert_eq!(s.pick_tab(0, 0), None); // already current
+        s.paths[0] = r"C:\a".into();
+        s.add_tab(0); // a, a, b: a copy right after the current one
+        assert_eq!((s.tab_list(0), s.tab[0]), (vec![r"C:\a".to_string(), r"C:\a".into(), r"C:\b".into()], 1));
+        assert_eq!(s.close_tab(0, 2), None); // another tab: no browsing
+        assert_eq!(s.tab[0], 1);
+        assert_eq!(s.close_tab(0, 1).as_deref(), Some(r"C:\a")); // the current one: its neighbour is browsed to
+        assert!(s.tabs[0].is_empty() && s.tab[0] == 0);
+
+        // closing the current tab moves right, or left at the end
+        s.tabs[0] = vec!["x".into(), "y".into(), "z".into()];
+        s.tab[0] = 1;
+        s.paths[0] = "y".into();
+        assert_eq!(s.close_tab(0, 1).as_deref(), Some("z"));
+        assert_eq!(s.tab[0], 1);
+        s.paths[0] = "z".into();
+        assert_eq!(s.close_tab(0, 1).as_deref(), Some("x"));
+        assert!(s.tabs[0].is_empty());
+        // a tab before the current one shifts it left
+        s.tabs[0] = vec!["x".into(), "y".into(), "z".into()];
+        (s.tab[0], s.paths[0]) = (2, "z".into());
+        assert_eq!((s.close_tab(0, 0), s.tab[0]), (None, 1));
+    }
+
+    #[test]
+    fn tabs_ini() {
+        let mut s = Session::default();
+        s.tabs_on = true;
+        (s.paths[2], s.tabs[2], s.tab[2]) = (r"D:\now".into(), vec![r"C:\a".into(), "old".into(), "::{x}".into()], 1);
+        let t = s.to_ini();
+        assert!(t.contains("tabs=1\n") && t.contains("b2=1|C:\\a|D:\\now|::{x}\n"), "{t}");
+        let back = Session::parse(&t);
+        assert!(back.tabs_on);
+        assert_eq!((back.tab_list(2), back.tab[2]), (vec![r"C:\a".to_string(), r"D:\now".into(), "::{x}".into()], 1));
+        // one tab, a bad index, an older ini: no tabs
+        assert!(Session::parse("p0=C:\\a\nb0=0|C:\\a\nb1=9|x|y\n").tabs[0].is_empty());
+        assert_eq!(Session::parse("b1=9|x|y\n").tab[1], 1);
+        assert!(!Session::parse("side=300\n").tabs_on);
+        // tabs move with their pane
+        let mut m = back.clone();
+        m.swap_slots(2, 0);
+        assert_eq!((m.tabs[0].len(), m.tab[0], m.tabs[2].len()), (3, 1, 0));
+        let mut l = Session::default();
+        l.take_layout(&back);
+        assert_eq!(l.tabs[2].len(), 3);
+    }
+
+    #[test]
+    fn tab_strip() {
+        let strip = RECT { left: 2, top: 30, right: 402, bottom: 56 };
+        let (tabs, plus) = tab_rects(strip, 2, 96);
+        assert_eq!((tabs[0].left, tabs[0].right - tabs[0].left, tabs[1].right, plus.left, plus.right), (6, 170, 346, 346, 370));
+        let (tabs, plus) = tab_rects(strip, 10, 96); // squeezed evenly, '+' still inside
+        assert!(tabs.iter().all(|r| r.right - r.left == 36) && plus.right <= strip.right);
+        assert!(tab_close_rect(tabs[0], 96).is_none() && tab_close_rect(RECT { left: 0, top: 0, right: 64, bottom: 20 }, 96).is_some());
     }
 }

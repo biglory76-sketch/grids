@@ -187,6 +187,12 @@ pub(crate) unsafe fn step_peek(prev: bool) {
     if hr == S_OK && (0..n).contains(&next) && fv.SelectItem(next, flags as u32).is_ok() {
         load_peek();
     }
+    // selecting puts the focus in the list; the preview stays open and keeps the keys, like Quick Look
+    let h = app(|a| a.peek);
+    if !h.0.is_null() && GetActiveWindow() != h {
+        _ = SetActiveWindow(h);
+        _ = SetFocus(Some(h));
+    }
 }
 
 pub(crate) unsafe fn close_peek(h: HWND) {
@@ -235,7 +241,9 @@ pub(crate) extern "system" fn peek_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 k @ (VK_LEFT | VK_UP | VK_RIGHT | VK_DOWN) => step_peek(k == VK_LEFT || k == VK_UP),
                 _ => {}
             },
-            WM_ACTIVATE if (wp.0 & 0xffff) as u32 == WA_INACTIVE => _ = PostMessageW(Some(h), WM_CLOSE, WPARAM(0), LPARAM(0)),
+            // another app or a click behind closes it; stepping takes the activation away only for a moment
+            WM_ACTIVATE if (wp.0 & 0xffff) as u32 == WA_INACTIVE => _ = PostMessageW(Some(h), WM_PEEK_LOST, WPARAM(0), LPARAM(0)),
+            WM_PEEK_LOST if GetActiveWindow() != h => _ = DestroyWindow(h),
             WM_DESTROY => {
                 want_peek(None);
                 app(|a| a.peek = HWND::default());

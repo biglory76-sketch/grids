@@ -239,6 +239,7 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 ID_HIDDEN => toggle_hidden(),
                 ID_EXT => toggle_extensions(),
                 ID_DBLUP => app(|a| a.s.dblup ^= true),
+                ID_TABS => toggle_tabs(),
                 ID_FOLLOW => {
                     if app(|a| {
                         a.s.follow ^= true;
@@ -276,6 +277,7 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 check(ID_HIDDEN, hidden());
                 check(ID_EXT, extensions());
                 check(ID_DBLUP, dblup);
+                check(ID_TABS, TABS_ON.load(Ordering::Relaxed));
                 check(ID_HOTKEY, hot);
                 check(ID_LANG, KO.load(Ordering::Relaxed));
                 for (k, (_, c)) in pal().accents.iter().enumerate() {
@@ -347,6 +349,33 @@ pub(crate) extern "system" fn pane_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
         match msg {
             WM_TIMER if wp.0 == TIMER_SETTLE => settle_cols(h),
             WM_SIZE => layout_pane(h),
+            WM_LBUTTONDBLCLK if pane_of(h).is_some_and(|i| on_strip(h, i, lp)) => {
+                // empty strip: a new tab; on a tab it is just a second click
+                let (x, y) = ((lp.0 & 0xffff) as i16 as i32, (lp.0 >> 16 & 0xffff) as i16 as i32);
+                if let Some(i) = pane_of(h) {
+                    let mut rc = RECT::default();
+                    _ = GetClientRect(h, &mut rc);
+                    let dpi = app(|a| a.dpi);
+                    let n = app(|a| a.s.tab_list(i).len());
+                    if matches!(tab_hit(&pane_geo(rc.right, rc.bottom, dpi), n, x, y, dpi), Some(TabHit::Strip)) {
+                        new_tab(i);
+                    } else {
+                        tab_mouse(h, i, x, y, false);
+                    }
+                }
+            }
+            WM_MBUTTONUP if pane_of(h).is_some_and(|i| on_strip(h, i, lp)) => {
+                let (x, y) = ((lp.0 & 0xffff) as i16 as i32, (lp.0 >> 16 & 0xffff) as i16 as i32);
+                if let Some(i) = pane_of(h) {
+                    tab_mouse(h, i, x, y, true);
+                }
+            }
+            WM_LBUTTONDOWN if pane_of(h).is_some_and(|i| on_strip(h, i, lp)) => {
+                let (x, y) = ((lp.0 & 0xffff) as i16 as i32, (lp.0 >> 16 & 0xffff) as i16 as i32);
+                if let Some(i) = pane_of(h) {
+                    tab_mouse(h, i, x, y, false);
+                }
+            }
             WM_LBUTTONDBLCLK => {
                 let (x, y) = ((lp.0 & 0xffff) as i16 as i32, (lp.0 >> 16 & 0xffff) as i16 as i32);
                 let addr = addr_rect(h, app(|a| a.dpi));
@@ -648,6 +677,7 @@ pub(crate) unsafe fn make_menus() -> Result<HMENU> {
     let view = CreatePopupMenu()?;
     let item = |menu: HMENU, flags: MENU_ITEM_FLAGS, id: usize, text: &str| AppendMenuW(menu, flags, id, &HSTRING::from(text));
     item(view, MF_STRING, ID_TREE, tr("Folder tree\tCtrl+Shift+E", "폴더 트리\tCtrl+Shift+E"))?;
+    item(view, MF_STRING, ID_TABS, tr("Tabs in panes", "패널 탭"))?;
     item(view, MF_STRING, ID_HIDDEN, tr("Show hidden files\tCtrl+H", "숨김 파일 표시\tCtrl+H"))?;
     item(view, MF_STRING, ID_GATHER, tr("Open folders from Explorer windows\tCtrl+Shift+O", "탐색기 창의 폴더 가져오기\tCtrl+Shift+O"))?;
     item(view, MF_STRING, ID_EXT, tr("Show file name extensions", "파일 확장명 표시"))?;

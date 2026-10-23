@@ -616,6 +616,7 @@ pub(crate) const WM_PANE_ICON: u32 = WM_APP + 44; // wParam = ticket, lParam = s
 pub(crate) const WM_DRIVES: u32 = WM_APP + 45; // drives may have come or gone: refresh_drives
 pub(crate) const WM_KIDS: u32 = WM_APP + 46; // wParam = request id; the list itself stays in KIDS
 pub(crate) const WM_THEME_SYNC: u32 = WM_APP + 47; // Windows light/dark may have changed: theme_sync
+pub(crate) const WM_PEEK_LOST: u32 = WM_APP + 48; // the preview went inactive: close it unless it is active again
 pub(crate) static NARROWING: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(-1); // column << 32 | width
 
 
@@ -703,6 +704,10 @@ pub(crate) unsafe fn settle_cols(h: HWND) {
     }
 }
 
+pub(crate) fn tabs_on() -> bool {
+    TABS_ON.load(Ordering::Relaxed)
+}
+
 pub(crate) unsafe fn on_nav(i: usize, pidl: *const ITEMIDLIST) {
     let parse = name(pidl, SIGDN_DESKTOPABSOLUTEPARSING);
     let disp = name(pidl, SIGDN_DESKTOPABSOLUTEEDITING);
@@ -731,6 +736,9 @@ pub(crate) unsafe fn on_nav(i: usize, pidl: *const ITEMIDLIST) {
         show_path_end(e, &disp);
     }
     request_icon(h, ticket, pidl);
+    if tabs_on() {
+        repaint_tabs(i); // the current tab's name is this folder's
+    }
     if let Ok(b) = GetDlgItem(Some(h), ID_FAV) {
         _ = InvalidateRect(Some(b), None, false);
     }

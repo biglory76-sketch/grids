@@ -42,6 +42,9 @@ pub(crate) unsafe fn key(m: &MSG) -> bool {
     let list = || view_of::<IFolderView2>(a).is_some_and(|fv| view_list(&fv) == m.hwnd);
     match VIRTUAL_KEY(m.wParam.0 as u16) {
         VK_TAB if ctrl => cycle(if shift { -1 } else { 1 }),
+        VK_T if ctrl && !shift && !alt && tabs_on() => new_tab(a),
+        VK_W if ctrl && !shift && !alt && tabs_on() => close_tab(a, app(|x| x.s.tab[a])),
+        k @ (VK_NEXT | VK_PRIOR) if ctrl && !shift && !alt && tabs_on() => step_tab(a, if k == VK_NEXT { 1 } else { -1 }),
         k if ctrl && !shift && !alt && (VK_1.0..=VK_9.0).contains(&k.0) && ((k.0 - VK_1.0) as usize) < app(|x| x.s.panes()) => {
             let i = (k.0 - VK_1.0) as usize;
             set_active(i);
@@ -130,6 +133,11 @@ pub(crate) unsafe fn key(m: &MSG) -> bool {
                 open_peek(a);
             }
         }
+        VK_F7 if !ctrl && !shift && !alt && list() => {
+            if m.lParam.0 & (1 << 30) == 0 {
+                new_folder(a);
+            }
+        }
         VK_V if ctrl && !shift && !alt && list() => {
             if !paste_key(m.lParam.0 & (1 << 30) != 0, || try_paste(a)) {
                 return shell();
@@ -207,4 +215,25 @@ pub(crate) unsafe fn pre_translate(m: &MSG) -> bool {
         }
         _ => false,
     }
+}
+
+// F7 (Total Commander, FAR): the view's own "New folder" from its background menu, so it is named, selected and
+// put into rename like Explorer's Ctrl+Shift+N.
+pub(crate) unsafe fn new_folder(i: usize) {
+    let Some(sv) = view_of::<IShellView>(i) else { return };
+    let Ok(cm) = sv.GetItemObject::<IContextMenu>(SVGIO_BACKGROUND) else { return };
+    let Ok(menu) = CreatePopupMenu() else { return };
+    if cm.QueryContextMenu(menu, 0, 1, 0x7fff, CMF_NORMAL).is_ok() {
+        let ci = CMINVOKECOMMANDINFO {
+            cbSize: size_of::<CMINVOKECOMMANDINFO>() as u32,
+            hwnd: sv.GetWindow().unwrap_or_default(),
+            lpVerb: s!("NewFolder"),
+            nShow: SW_SHOWNORMAL.0,
+            ..Default::default()
+        };
+        if cm.InvokeCommand(&ci).is_err() {
+            _ = MessageBeep(MB_ICONWARNING);
+        }
+    }
+    _ = DestroyMenu(menu);
 }

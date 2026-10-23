@@ -21,6 +21,7 @@ Every pane is a real Windows Explorer view, so right-click menus, drag and drop,
 - **Sessions**: the layout, folders and each pane's columns (order, widths, sort) are saved automatically. Save named sessions and load them from cards that preview each layout; hover a card for a ✕ that deletes it, or right-click it to rename it in place (a name that's taken is refused, never overwritten); a green dot on the save button shows unsaved layout changes.
 - **Missing folders**: a local folder from a session, favourite, recent list or the command line that was deleted or renamed opens its nearest existing parent instead, and the status line says which folder was missing (8 s); it also leaves the recent list.
 - **Columns are a pane setting**: their order, widths and sort stay as the pane moves from folder to folder, and any column can be made narrower than Explorer allows (Size stops at 90 px there).
+- **Tabs** (View menu → Tabs in panes, off by default): each pane gets a tab strip under its header. Ctrl+T or + opens the current folder in a new tab, Ctrl+W, × or a middle click closes one, Ctrl+PgDn / Ctrl+PgUp or a click switches; double-click the empty strip for a new tab. Tabs are saved with the panes and sessions, and kept while the strips are hidden.
 - **Folder favourites**: star a folder from its pane header, jump to it from the star list in the toolbar.
 - **Drive buttons**: C: D: E: … in the top toolbar open that drive in the active pane; the active pane's drive is underlined in the selection colour, and buttons come and go as drives are plugged in or removed.
 - **Folder sizes**: the status line also shows the total size of selected folders, summed in the background (F5 sums again; "partial" when some items couldn't be read).
@@ -64,7 +65,10 @@ The exe is not code-signed, so Windows SmartScreen may warn the first time: choo
 | Enter / Esc | Apply / cancel the address or filter |
 | Win+Alt+E | Bring Grids to front from any app, ready to type in the active pane (again: minimize; View menu turns it off) |
 | Ctrl+H | Show hidden files |
-| F3 | Quick preview of the focused file (arrows: previous / next, Esc: close) |
+| F3 | Quick preview of the focused file (arrows: previous / next file without closing it, Esc: close) |
+| F7 | New folder (named and ready to rename, as Explorer's Ctrl+Shift+N) |
+| Ctrl+T / Ctrl+W | New tab / close tab, with tabs on |
+| Ctrl+PgDn / Ctrl+PgUp | Next / previous tab |
 | Ctrl+V | With a copied picture (screenshot, browser image): save it here as a PNG file |
 | Ctrl+S | Save the current session |
 | Ctrl+B | Favourites list (↑/↓, Enter to open, Del to remove, Alt+↑/↓ or drag to reorder) |
