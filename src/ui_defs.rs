@@ -198,7 +198,7 @@ F7\tNew folder\n\
 F6 / Shift+F6\tMove between file list, address bar, filter and folder tree\n\
 Enter / Esc\tApply / cancel the address or filter\n\
 Ctrl+H\tShow hidden files\n\
-F3\tQuick preview of the focused file (arrows: previous / next file without closing, Esc: close)\n\
+F3\tQuick preview of the focused file: pictures, text and code, Markdown, CSV tables, Office / PDF / HTML / mail (files up to 10 MB), HWP / HWPX, ZIP contents, folders; anything else as a card of facts (arrows: previous / next file without closing, wheel or PgUp / PgDn: scroll, Esc: close, also while it is still opening)\n\
 Ctrl+V\tWith a copied picture (screenshot, browser image): save it here as a PNG file\n\
 F1\tHelp (opens the README on GitHub)\n\
 Win+Alt+E\tBring Grids to front from any app (again: minimize)\n\
@@ -240,7 +240,7 @@ F7\t새 폴더\n\
 F6 / Shift+F6\t파일 목록·주소창·필터·폴더 트리 사이 이동\n\
 Enter / Esc\t주소창·필터 적용 / 취소\n\
 Ctrl+H\t숨김 파일 표시\n\
-F3\t포커스한 파일 빠른 미리보기 (방향키: 닫지 않고 이전·다음 파일, Esc: 닫기)\n\
+F3\t포커스한 파일 빠른 미리보기: 사진, 텍스트·코드, 마크다운, CSV 표, Office·PDF·HTML·메일(10 MB까지), HWP·HWPX, ZIP 목록, 폴더. 나머지는 정보 카드 (방향키: 닫지 않고 이전·다음 파일, 휠·PgUp/PgDn: 스크롤, Esc: 닫기, 여는 중에도 바로)\n\
 Ctrl+V\t복사한 그림(스크린샷, 브라우저 이미지)이 있으면 이 폴더에 PNG 파일로 저장\n\
 F1\t도움말 (GitHub README 열기)\n\
 Win+Alt+E\t어디서나 Grids 앞으로 (다시 누르면 최소화)\n\

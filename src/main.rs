@@ -57,6 +57,8 @@ mod paint;
 mod layout_picker;
 mod load_popup;
 mod favourites;
+mod docparse;
+mod preview;
 mod peek;
 mod keys_window;
 mod paste;
@@ -82,6 +84,8 @@ use paint::*;
 use layout_picker::*;
 use load_popup::*;
 use favourites::*;
+use docparse::*;
+use preview::*;
 use peek::*;
 use keys_window::*;
 use paste::*;
@@ -1094,14 +1098,15 @@ mod tests {
 
     #[test]
     fn peek_newest_only() {
-        let req = |p: &str| Some(PeekReq { path: p.into(), w: 10, h: 10, hwnd: 0 });
-        let pix = || Some(Pix { w: 1, h: 1, bgra: vec![0; 4], size: Some(3) });
+        let req = |p: &str| Some(PeekReq { path: p.into(), w: 10, h: 10, hwnd: 0, plain: false });
+        let pix = || (Body::Pic(Pix { w: 1, h: 1, bgra: vec![0; 4] }), Some(3));
+        let card = || (Body::Card { icon: None, rows: Vec::new() }, None);
         let mut j = PeekJob { gen: 0, req: None, done: None };
         j.want(req("a"));
         let a = j.gen;
         j.want(req("b")); // arrow pressed before a's picture came
         assert!(!j.publish(a, pix()) && j.done.is_none()); // a's picture is dropped
-        assert!(j.publish(j.gen, None) && matches!(j.done, Some(None))); // b: no preview
+        assert!(j.publish(j.gen, card()) && matches!(j.done, Some((Body::Card { .. }, None)))); // b: the facts only
         let b = j.gen;
         j.want(None); // closed
         assert!(j.gen != b && j.req.is_none() && j.done.is_none());
@@ -1804,5 +1809,118 @@ mod tests {
         let (tabs, plus) = tab_rects(strip, 10, 96); // squeezed evenly, '+' still inside
         assert!(tabs.iter().all(|r| r.right - r.left == 36) && plus.right <= strip.right);
         assert!(tab_close_rect(tabs[0], 96).is_none() && tab_close_rect(RECT { left: 0, top: 0, right: 64, bottom: 20 }, 96).is_some());
+    }
+
+    #[test]
+    fn text_decoding() {
+        assert_eq!(decode_text(b"\xEF\xBB\xBFhi"), "hi");
+        assert_eq!(decode_text(&[0xFF, 0xFE, b'h', 0, b'i', 0]), "hi");
+        assert_eq!(decode_text("한글".as_bytes()), "한글");
+        assert_eq!(decode_text(&"한글".as_bytes()[..5]), "한"); // cut inside a character
+        assert_eq!(decode_text(&[0xC7, 0xD1, 0xB1, 0xDB]), "한글"); // cp949
+        assert!(looks_text(b"a\tb\r\n") && !looks_text(b"MZ\x90\x00\x03"));
+        assert_eq!(ext_of(r"C:\a\b.TXT"), "txt");
+        assert_eq!(ext_of(r"C:\a\Makefile"), "makefile");
+        assert_eq!(ext_of(r"C:\a\.gitignore"), ".gitignore");
+    }
+
+    #[test]
+    fn csv_parsing() {
+        let rows = csv_rows("a,\"b,c\",\"d \"\"q\"\"\"\r\n1,2\n", ',', 100);
+        assert_eq!(rows, vec![vec!["a", "b,c", "d \"q\""], vec!["1", "2"]]);
+        assert_eq!(csv_rows("x\n\"multi\nline\",y", ',', 100)[1], vec!["multi\nline", "y"]);
+        assert_eq!(csv_rows("1\n2\n3\n", ',', 2).len(), 2);
+        assert_eq!((csv_sep("a;b;c\n"), csv_sep("a,b;c\n")), (';', ','));
+    }
+
+    // A ZIP made by hand: one stored entry, one deflated, a Korean name without the UTF-8 flag.
+    fn zip_bytes(files: &[(&[u8], &[u8], bool, u16)]) -> Vec<u8> {
+        let mut out = Vec::new();
+        let mut cd = Vec::new();
+        for (name, data, deflate, flags) in files {
+            let body = if *deflate { miniz_oxide::deflate::compress_to_vec(data, 6) } else { data.to_vec() };
+            let off = out.len() as u32;
+            let method: u16 = if *deflate { 8 } else { 0 };
+            let mut local = vec![0x50, 0x4b, 3, 4, 20, 0];
+            local.extend(flags.to_le_bytes());
+            local.extend(method.to_le_bytes());
+            local.extend([0u8; 8]); // time, date, crc
+            local.extend((body.len() as u32).to_le_bytes());
+            local.extend((data.len() as u32).to_le_bytes());
+            local.extend((name.len() as u16).to_le_bytes());
+            local.extend(0u16.to_le_bytes());
+            local.extend(*name);
+            out.extend(local);
+            out.extend(&body);
+            let mut c = vec![0x50, 0x4b, 1, 2, 20, 0, 20, 0];
+            c.extend(flags.to_le_bytes());
+            c.extend(method.to_le_bytes());
+            c.extend([0u8; 8]);
+            c.extend((body.len() as u32).to_le_bytes());
+            c.extend((data.len() as u32).to_le_bytes());
+            c.extend((name.len() as u16).to_le_bytes());
+            c.extend([0u8; 12]); // extra, comment, disk, attrs
+            c.extend(off.to_le_bytes());
+            c.extend(*name);
+            cd.extend(c);
+        }
+        let start = out.len() as u32;
+        out.extend(&cd);
+        out.extend([0x50, 0x4b, 5, 6, 0, 0, 0, 0]);
+        out.extend((files.len() as u16).to_le_bytes());
+        out.extend((files.len() as u16).to_le_bytes());
+        out.extend((cd.len() as u32).to_le_bytes());
+        out.extend(start.to_le_bytes());
+        out.extend([0, 0]);
+        out
+    }
+
+    #[test]
+    fn zip_reading() {
+        let big = "<w:p><w:r><w:t>안녕 &amp; hi</w:t></w:r></w:p>".repeat(50);
+        let z = zip_bytes(&[(b"a.txt", b"stored", false, 0x800), (b"word/document.xml", big.as_bytes(), true, 0x800), (&[0xC7, 0xD1, b'.', b't'], b"x", false, 0)]);
+        let mut cur = std::io::Cursor::new(z);
+        let es = zip_entries(&mut cur).unwrap();
+        assert_eq!(es.iter().map(|e| e.name.as_str()).collect::<Vec<_>>(), vec!["a.txt", "word/document.xml", "한.t"]);
+        assert_eq!(zip_read(&mut cur, &es[0], 100).unwrap(), b"stored");
+        let doc = zip_read(&mut cur, zip_find(&es, "WORD/document.xml").unwrap(), 1 << 20).unwrap();
+        assert_eq!(doc.len(), big.len());
+        assert_eq!(zip_read(&mut cur, &es[1], 10).unwrap().len(), 10); // capped
+        let text = xml_text(&decode_text(&doc), &["w:t"], &["w:p"], &[], &[]);
+        assert_eq!(text.lines().next(), Some("안녕 & hi"));
+        assert!(zip_entries(&mut std::io::Cursor::new(b"not a zip at all".to_vec())).is_none());
+    }
+
+    #[test]
+    fn xml_and_sheets() {
+        let x = r#"<a:p><a:r><a:t>One</a:t></a:r><a:br/><a:r><a:t xml:space="preserve"> two</a:t></a:r></a:p><a:p><a:t/><a:t>&#xD55C;&lt;</a:t></a:p>"#;
+        assert_eq!(xml_text(x, &["a:t"], &["a:p"], &[], &["a:br"]), "One\n two\n한<\n");
+        assert_eq!((cell_ref("A1"), cell_ref("AB12"), cell_ref("1A")), (Some((0, 0)), Some((27, 11)), None));
+        let ss = xlsx_strings("<sst><si><t>이름</t></si><si><r><t>A</t></r><r><t>B</t></r></si></sst>");
+        assert_eq!(ss, vec!["이름", "AB"]);
+        let sheet = r#"<row r="1"><c r="A1" t="s"><v>0</v></c><c r="C1" t="s"><v>1</v></c></row><row r="2"><c r="A2"><v>0.30000000000000004</v></c><c r="B2" t="inlineStr"><is><t>x</t></is></c></row>"#;
+        assert_eq!(xlsx_rows(sheet, &ss, 100, 100), vec![vec!["이름", "", "AB"], vec!["0.3", "x"]]);
+        assert_eq!(xlsx_rows(sheet, &ss, 1, 2), vec![vec!["이름"]]); // limits
+    }
+
+    #[test]
+    fn mail_and_html() {
+        assert_eq!(mime_words("=?UTF-8?B?7JWI64WV?= =?utf-8?Q?_hi?= there"), "안녕 hi there");
+        assert_eq!(mime_words("=?ks_c_5601-1987?B?x9Gx2w==?="), "한글");
+        let eml = b"Subject: =?UTF-8?B?7JWI64WV?=\r\nFrom: a@b.c\r\nContent-Type: multipart/alternative; boundary=\"XX\"\r\n\r\n--XX\r\nContent-Type: text/html; charset=utf-8\r\n\r\n<p>html</p>\r\n--XX\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\n=EC=95=88 plain=\r\n text\r\n--XX\r\nContent-Type: application/pdf; name=\"r.pdf\"\r\nContent-Disposition: attachment; filename=\"r.pdf\"\r\n\r\nJVBE\r\n--XX--\r\n";
+        let t = eml_text(eml, true);
+        assert!(t.starts_with("제목: 안녕\n보낸 사람: a@b.c\n첨부: r.pdf\n\n"), "{t}");
+        assert!(t.ends_with("안 plain text"), "{t}");
+        let h = html_text("<html><head><title>x</title></head><body><script>var a;</script><h1>Title</h1><p>a &amp; b</p><ul><li>one</li></ul></body></html>");
+        assert_eq!(h, "Title\n\na & b\n\n• one"); // blocks a blank line apart
+    }
+
+    #[test]
+    fn markdown_lines() {
+        let l = md_lines("# T\n\nsome **bold** `x`\n- a\n  - b\n> q\n```\ncode **\n```\n---");
+        let styles: Vec<Style> = l.iter().map(|x| x.1).collect();
+        use Style::*;
+        assert_eq!(styles, vec![H1, Plain, Plain, Bullet, Bullet, Quote, Mono, Quote]);
+        assert_eq!((l[2].0.as_str(), l[3].0.as_str(), l[4].0.as_str(), l[6].0.as_str()), ("some bold x", "• a", "    • b", "code **"));
     }
 }
