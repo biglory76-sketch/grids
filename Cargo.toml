@@ -1,6 +1,6 @@
 [package]
 name = "grids"
-version = "0.4.2"
+version = "0.5.0"
 edition = "2021"
 description = "Fast multi-pane file manager for Windows"
 license = "MIT"
@@ -11,10 +11,12 @@ publish = false
 version = "0.62"
 features = [
     "Win32_Foundation",
+    "Win32_Globalization",
     "Win32_Graphics_Dwm",
     "Win32_Graphics_Gdi",
     "Win32_Graphics_Imaging",
     "Win32_Security",
+    "Win32_Storage_EnhancedStorage",
     "Win32_Storage_FileSystem",
     "Win32_System_Com",
     "Win32_System_Com_StructuredStorage",
@@ -27,6 +29,7 @@ features = [
     "Win32_System_SystemInformation",
     "Win32_System_SystemServices",
     "Win32_System_Threading",
+    "Win32_System_Time",
     "Win32_System_Variant",
     "Win32_UI_Accessibility",
     "Win32_UI_Controls",
@@ -35,11 +38,18 @@ features = [
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_Shell",
     "Win32_UI_Shell_Common",
+    "Win32_UI_Shell_PropertiesSystem",
     "Win32_UI_WindowsAndMessaging",
 ]
 
 [dependencies.windows-core]
 version = "0.62"
+
+# inflate for ZIP-based documents in the preview (docx, xlsx, pptx, hwpx, odt): pure Rust, no C
+[dependencies.miniz_oxide]
+version = "0.8"
+default-features = false
+features = ["with-alloc"]
 
 [profile.release]
 opt-level = "z"
