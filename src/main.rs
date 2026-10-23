@@ -1975,4 +1975,12 @@ mod tests {
         assert_eq!(group_digits(30360942), "30,360,942");
         assert_eq!(group_digits(999), "999");
     }
+
+    #[test]
+    fn space_previews() {
+        assert!(space_peeks(None) && space_peeks(Some(Duration::from_millis(1500))));
+        assert!(!space_peeks(Some(Duration::from_millis(300)))); // "my f|": the space is part of the name
+        assert!(types_char(VK_A) && types_char(VK_7) && types_char(VIRTUAL_KEY(0xE5))); // 0xE5: Korean IME
+        assert!(!types_char(VK_SPACE) && !types_char(VK_DOWN) && !types_char(VK_F3) && !types_char(VK_RETURN));
+    }
 }

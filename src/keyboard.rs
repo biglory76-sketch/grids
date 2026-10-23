@@ -40,7 +40,19 @@ pub(crate) unsafe fn key(m: &MSG) -> bool {
         (svh == m.hwnd || IsChild(svh, m.hwnd).as_bool()) && sv.TranslateAccelerator(m) == S_OK
     };
     let list = || view_of::<IFolderView2>(a).is_some_and(|fv| view_list(&fv) == m.hwnd);
-    match VIRTUAL_KEY(m.wParam.0 as u16) {
+    // Explorer's type-to-find takes a space inside a name: a Space soon after typing stays the list's
+    let vk = VIRTUAL_KEY(m.wParam.0 as u16);
+    let typed_ago = LAST_TYPED.get().map(|t| t.elapsed());
+    if !ctrl && !alt && types_char(vk) && list() {
+        LAST_TYPED.set(Some(Instant::now()));
+    }
+    match vk {
+        // Space: preview, as in Finder (F3 too); the preview's own Space closes it
+        VK_SPACE if !ctrl && !shift && !alt && list() && space_peeks(typed_ago) => {
+            if m.lParam.0 & (1 << 30) == 0 {
+                open_peek(a);
+            }
+        }
         VK_TAB if ctrl => cycle(if shift { -1 } else { 1 }),
         VK_T if ctrl && !shift && !alt && tabs_on() => new_tab(a),
         VK_W if ctrl && !shift && !alt && tabs_on() => close_tab(a, app(|x| x.s.tab[a])),
@@ -236,4 +248,18 @@ pub(crate) unsafe fn new_folder(i: usize) {
         }
     }
     _ = DestroyMenu(menu);
+}
+
+thread_local! {
+    pub(crate) static LAST_TYPED: Cell<Option<Instant>> = const { Cell::new(None) };
+}
+
+/// Keys that type into Explorer's find-as-you-type: letters, digits, punctuation, the IME's (Korean) keys.
+pub(crate) fn types_char(vk: VIRTUAL_KEY) -> bool {
+    matches!(vk.0, 0x30..=0x39 | 0x41..=0x5A | 0x60..=0x6F | 0xBA..=0xC0 | 0xDB..=0xDF | 0xE5)
+}
+
+/// Space opens the preview unless a name is being typed (a key within the last second).
+pub(crate) fn space_peeks(typed_ago: Option<Duration>) -> bool {
+    typed_ago.is_none_or(|d| d >= Duration::from_secs(1))
 }
