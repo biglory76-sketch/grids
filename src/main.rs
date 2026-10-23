@@ -1936,4 +1936,17 @@ mod tests {
         fix_alpha(&mut pre);
         assert_eq!(pre, vec![100, 100, 100, 128, 0, 0, 0, 0]); // already premultiplied: left alone
     }
+
+    #[test]
+    fn peek_wheel() {
+        use Wheel::*;
+        assert_eq!(wheel_action(0, 0, true, false), Step); // a picture: straight to the next file
+        assert_eq!(wheel_action(0, 0, false, false), Step);
+        assert_eq!(wheel_action(0, 500, true, false), Scroll); // long text: scroll first
+        assert_eq!(wheel_action(0, 500, false, false), Hold); // at the top, just arrived
+        assert_eq!(wheel_action(0, 500, false, true), Step); // rested there: previous file
+        assert_eq!(wheel_action(500, 500, true, false), Hold);
+        assert_eq!(wheel_action(500, 500, true, true), Step);
+        assert_eq!(wheel_action(500, 500, false, true), Scroll); // back up is still scrolling
+    }
 }

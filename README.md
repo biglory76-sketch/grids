@@ -66,7 +66,7 @@ The exe is not code-signed, so Windows SmartScreen may warn the first time: choo
 | Enter / Esc | Apply / cancel the address or filter |
 | Win+Alt+E | Bring Grids to front from any app, ready to type in the active pane (again: minimize; View menu turns it off) |
 | Ctrl+H | Show hidden files |
-| F3 | Quick preview of the focused file: pictures, text and code, Markdown, CSV tables, Office / PDF / HTML / mail (files up to 10 MB), HWP / HWPX, ZIP contents, folders; anything else as a card of facts (arrows: previous / next file without closing, wheel or PgUp / PgDn: scroll, Esc: close, also while it is still opening) |
+| F3 | Quick preview of the focused file: pictures, text and code, Markdown, CSV tables, Office / PDF / HTML / mail (files up to 10 MB), HWP / HWPX, ZIP contents, folders; anything else as a card of facts (arrows or the wheel: previous / next file without closing; on long text the wheel scrolls first and moves on past the end; PgUp / PgDn: scroll; Esc: close, also while it is still opening) |
 | F7 | New folder (named and ready to rename, as Explorer's Ctrl+Shift+N) |
 | Ctrl+T / Ctrl+W | New tab / close tab, with tabs on |
 | Ctrl+PgDn / Ctrl+PgUp | Next / previous tab |
