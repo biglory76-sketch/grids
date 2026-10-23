@@ -1923,4 +1923,17 @@ mod tests {
         assert_eq!(styles, vec![H1, Plain, Plain, Bullet, Bullet, Quote, Mono, Quote]);
         assert_eq!((l[2].0.as_str(), l[3].0.as_str(), l[4].0.as_str(), l[6].0.as_str()), ("some bold x", "• a", "    • b", "code **"));
     }
+
+    #[test]
+    fn icon_alpha() {
+        let mut photo = vec![10, 20, 30, 0, 40, 50, 60, 0];
+        fix_alpha(&mut photo);
+        assert_eq!(photo, vec![10, 20, 30, 255, 40, 50, 60, 255]); // no alpha at all: opaque
+        let mut icon = vec![255, 255, 255, 128, 200, 100, 0, 255, 0, 0, 0, 0];
+        fix_alpha(&mut icon);
+        assert_eq!(icon, vec![128, 128, 128, 128, 200, 100, 0, 255, 0, 0, 0, 0]); // straight: premultiplied
+        let mut pre = vec![100, 100, 100, 128, 0, 0, 0, 0];
+        fix_alpha(&mut pre);
+        assert_eq!(pre, vec![100, 100, 100, 128, 0, 0, 0, 0]); // already premultiplied: left alone
+    }
 }
