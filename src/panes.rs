@@ -993,6 +993,12 @@ pub(crate) unsafe fn set_layout(h: Vec<usize>) {
         a.s.set_heights(h);
         gone
     });
+    for (j, &k) in perm.iter().enumerate() {
+        // a pane that changed slot is read out under its new number, as in swap_panes
+        if let Some(pw) = app(|a| a.panes[j].as_ref().map(|p| p.hwnd)).filter(|_| j != k) {
+            name_fields(pw, j);
+        }
+    }
     NAV_GEN.fetch_add(1, Ordering::SeqCst); // a double-click pair that spans the move is dropped
     relayout();
     redraw_all();
