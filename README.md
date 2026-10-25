@@ -101,6 +101,8 @@ This builds `target\release\grids.exe` and copies it to `grids.exe` in the proje
 
 Inspired by [Q-Dir](https://www.softwareok.com/?seite=Freeware/Q-Dir). Grids is an independent project, not affiliated with Q-Dir or its author.
 
+Thanks to Jun ([@Samek86](https://github.com/Samek86)): the fix for F3, Space and F7 doing nothing in the file list on some PCs and the screen-reader pane names after a layout change come from Jun's fork, [Samek86/grids](https://github.com/Samek86/grids).
+
 ## License
 
 [MIT](LICENSE)

@@ -101,6 +101,8 @@ build.cmd
 
 [Q-Dir](https://www.softwareok.com/?seite=Freeware/Q-Dir)에서 영감을 받았습니다. Grids는 Q-Dir 및 그 제작자와 관계없는 독립 프로젝트입니다.
 
+Jun([@Samek86](https://github.com/Samek86))님께 감사드립니다. 일부 PC의 파일 목록에서 F3·Space·F7이 동작하지 않던 문제의 수정과, 레이아웃을 바꾼 뒤 화면 낭독기의 패널 이름 수정은 Jun님의 포크 [Samek86/grids](https://github.com/Samek86/grids)에서 가져왔습니다.
+
 ## 라이선스
 
 [MIT](LICENSE)
