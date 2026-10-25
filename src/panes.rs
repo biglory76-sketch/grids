@@ -790,10 +790,7 @@ pub(crate) unsafe fn up_candidate(m: &MSG) -> Option<(usize, usize, isize)> {
             return false;
         };
         svh.set(h);
-        let mut c = [0u16; 32];
-        let n = GetClassNameW(m.hwnd, &mut c) as usize;
-        let list = matches!(String::from_utf16_lossy(&c[..n]).as_str(), "DirectUIHWND" | "SysListView32");
-        list && (h == m.hwnd || IsChild(h, m.hwnd).as_bool())
+        in_view_list(h, m.hwnd)
             && m.wParam.0 & (MK_CONTROL.0 | MK_SHIFT.0) as usize == 0
             && on_background(m)
     });

@@ -39,7 +39,7 @@ pub(crate) unsafe fn key(m: &MSG) -> bool {
         let svh = sv.GetWindow().unwrap_or_default();
         (svh == m.hwnd || IsChild(svh, m.hwnd).as_bool()) && sv.TranslateAccelerator(m) == S_OK
     };
-    let list = || view_of::<IFolderView2>(a).is_some_and(|fv| view_list(&fv) == m.hwnd);
+    let list = || view_of::<IShellView>(a).and_then(|v| v.GetWindow().ok()).is_some_and(|v| in_view_list(v, m.hwnd));
     // Explorer's type-to-find takes a space inside a name: a Space soon after typing stays the list's
     let vk = VIRTUAL_KEY(m.wParam.0 as u16);
     let typed_ago = LAST_TYPED.get().map(|t| t.elapsed());

@@ -532,6 +532,16 @@ pub(crate) unsafe fn view_list(fv: &IFolderView2) -> HWND {
     FindWindowExW(Some(view), None, w!("SysListView32"), PCWSTR::null()).unwrap_or_default()
 }
 
+// Whether h is the file list of the view window. The list is a SysListView32 on some systems and a
+// DirectUIHWND on others, where view_list finds nothing; both are the list when they sit inside the view.
+pub(crate) unsafe fn in_view_list(view: HWND, h: HWND) -> bool {
+    let mut c = [0u16; 32];
+    let n = GetClassNameW(h, &mut c) as usize;
+    !view.0.is_null()
+        && matches!(String::from_utf16_lossy(&c[..n]).as_str(), "DirectUIHWND" | "SysListView32")
+        && (view == h || IsChild(view, h).as_bool())
+}
+
 // Explorer puts a floor under some columns (Size stops at 90 px) so numbers never get cut, and puts it
 // back whenever a column changes (through an interface, not messages we could catch). In a pane the
 // user decides: the floor is lowered to a sliver right before each resize, a drag on the header or a
