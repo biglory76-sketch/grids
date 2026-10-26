@@ -473,15 +473,22 @@ pub(crate) extern "system" fn pane_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                     recent_menu(i);
                 }
             }
-            // right-click on the header itself (not its buttons or fields): colour label
+            // right-click on the header itself (not its buttons or fields): colour label; on a tab: that tab's menu
             WM_CONTEXTMENU if wp.0 == h.0 as usize => {
                 let mut p = POINT { x: (lp.0 & 0xffff) as i16 as i32, y: (lp.0 >> 16 & 0xffff) as i16 as i32 };
                 let screen = p;
                 _ = ScreenToClient(h, &mut p);
                 let mut rc = RECT::default();
                 _ = GetClientRect(h, &mut rc);
-                match pane_of(h) {
-                    Some(i) if lp.0 != -1 && p.y < pane_geo(rc.right, rc.bottom, app(|a| a.dpi)).view.top => tint_menu(h, i, screen),
+                let dpi = app(|a| a.dpi);
+                let pg = pane_geo(rc.right, rc.bottom, dpi);
+                let tab = |i: usize| match tab_hit(&pg, app(|a| a.s.tab_list(i).len()), p.x, p.y, dpi) {
+                    Some(TabHit::Tab(k) | TabHit::Close(k)) => Some(k),
+                    _ => None,
+                };
+                match pane_of(h).filter(|_| lp.0 != -1).map(|i| (i, tab(i))) {
+                    Some((i, Some(k))) => tab_menu(h, i, k, screen),
+                    Some((i, None)) if p.y < pg.view.top => tint_menu(h, i, screen),
                     _ => return DefWindowProcW(h, msg, wp, lp),
                 }
             }

@@ -56,6 +56,7 @@ pub(crate) unsafe fn key(m: &MSG) -> bool {
         VK_TAB if ctrl => cycle(if shift { -1 } else { 1 }),
         VK_T if ctrl && !shift && !alt && tabs_on() => new_tab(a),
         VK_W if ctrl && !shift && !alt && tabs_on() => close_tab(a, app(|x| x.s.tab[a])),
+        VK_K if ctrl && !shift && !alt && tabs_on() => dup_tab(a, app(|x| x.s.tab[a])),
         k @ (VK_NEXT | VK_PRIOR) if ctrl && !shift && !alt && tabs_on() => step_tab(a, if k == VK_NEXT { 1 } else { -1 }),
         k if ctrl && !shift && !alt && (VK_1.0..=VK_9.0).contains(&k.0) && ((k.0 - VK_1.0) as usize) < app(|x| x.s.panes()) => {
             let i = (k.0 - VK_1.0) as usize;

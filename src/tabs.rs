@@ -49,6 +49,28 @@ pub(crate) unsafe fn pick_tab(i: usize, k: usize) {
     tab_go(i, |s| s.pick_tab(i, k));
 }
 
+pub(crate) unsafe fn dup_tab(i: usize, k: usize) {
+    tab_go(i, |s| s.dup_tab(i, k));
+}
+
+// Right-click on a tab: duplicate or close that tab.
+pub(crate) unsafe fn tab_menu(h: HWND, i: usize, k: usize, at: POINT) {
+    let n = app(|a| a.s.tab_list(i).len());
+    let Ok(menu) = CreatePopupMenu() else { return };
+    _ = AppendMenuW(menu, MF_STRING, 1, &HSTRING::from(tr("Duplicate tab\tCtrl+K", "탭 복제\tCtrl+K")));
+    let close = if n > 1 { MF_STRING } else { MF_STRING | MF_GRAYED }; // the last tab stays
+    _ = AppendMenuW(menu, close, 2, &HSTRING::from(tr("Close tab\tCtrl+W", "탭 닫기\tCtrl+W")));
+    set_active(i);
+    let pick = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_LEFTALIGN | TPM_TOPALIGN, at.x, at.y, None, h, None).0;
+    _ = DestroyMenu(menu);
+    match pick {
+        1 => dup_tab(i, k),
+        2 => close_tab(i, k),
+        _ => {}
+    }
+    focus_view(i);
+}
+
 pub(crate) unsafe fn close_tab(i: usize, k: usize) {
     if app(|a| a.s.tab_list(i).len()) < 2 {
         _ = MessageBeep(MB_ICONWARNING); // the last tab stays

@@ -302,6 +302,20 @@ impl Session {
         (self.tabs[i], self.tab[i]) = (t, k);
     }
 
+    /// Ctrl+K / the tab menu's Duplicate: a copy of tab k right after it, made current. The folder to browse to,
+    /// None when k was the current one (same folder) or there is no such tab.
+    pub(crate) fn dup_tab(&mut self, i: usize, k: usize) -> Option<String> {
+        let mut t = self.tab_list(i);
+        if k >= t.len() {
+            return None;
+        }
+        let cur = if t.len() > 1 { self.tab[i] } else { 0 };
+        let to = t[k].clone();
+        t.insert(k + 1, to.clone());
+        (self.tabs[i], self.tab[i]) = (t, k + 1);
+        (k != cur).then_some(to)
+    }
+
     /// Tab k becomes current: the folder to browse to, None when it already is (or there is no such tab).
     pub(crate) fn pick_tab(&mut self, i: usize, k: usize) -> Option<String> {
         let t = self.tab_list(i);

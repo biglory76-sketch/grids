@@ -1783,6 +1783,19 @@ mod tests {
         s.tabs[0] = vec!["x".into(), "y".into(), "z".into()];
         (s.tab[0], s.paths[0]) = (2, "z".into());
         assert_eq!((s.close_tab(0, 0), s.tab[0]), (None, 1));
+
+        // duplicate: a copy right after the tab, made current; browsing only when it was another tab
+        let mut s = Session::default();
+        s.paths[0] = "a".into();
+        assert_eq!(s.dup_tab(0, 0), None); // a single tab: same folder
+        assert_eq!((s.tab_list(0), s.tab[0]), (vec!["a".to_string(), "a".into()], 1));
+        s.tabs[0] = vec!["x".into(), "y".into(), "z".into()];
+        (s.tab[0], s.paths[0]) = (2, "z".into());
+        assert_eq!(s.dup_tab(0, 0).as_deref(), Some("x"));
+        assert_eq!((s.tab_list(0).len(), s.tab[0]), (4, 1));
+        assert_eq!(s.tabs[0], vec!["x", "x", "y", "z"]);
+        assert_eq!(s.dup_tab(0, 9), None); // no such tab
+        assert_eq!(s.tab[0], 1);
     }
 
     #[test]
