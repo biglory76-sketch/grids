@@ -122,6 +122,13 @@ pub(crate) unsafe fn key(m: &MSG) -> bool {
             }
         }
         VK_DOWN if alt && !ctrl && !shift && filt => kind_menu(a), // a combo box's Alt+↓
+        // the view leaves F5 to its frame, as Explorer's does: reload the active pane from anywhere in the window
+        VK_F5 if !ctrl && !alt && !shift => {
+            resum_sizes();
+            if let Some(sv) = view_of::<IShellView>(a) {
+                _ = sv.Refresh();
+            }
+        }
         _ if addr || filt => return false,
         VK_C if ctrl && shift && !alt && list() => copy_paths(a),
         // held until released: one box / one inversion per press (Ctrl+Num+ stays Explorer's column fit)
@@ -137,10 +144,6 @@ pub(crate) unsafe fn key(m: &MSG) -> bool {
             open_match(a, false);
         }
         VK_DOWN if alt && !ctrl && !shift => recent_menu(a),
-        VK_F5 if list() => {
-            resum_sizes();
-            return shell();
-        }
         VK_F3 if !ctrl && !shift && !alt && list() => {
             if m.lParam.0 & (1 << 30) == 0 {
                 open_peek(a);
