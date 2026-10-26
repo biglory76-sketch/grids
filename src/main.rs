@@ -627,8 +627,9 @@ mod tests {
         // a navigation between the clicks
         assert!(!next(p, Click { gen: 2, ..c(200, 10, 10) }, true).1);
 
-        assert!(bg_role(33) && bg_role(34));
-        assert!([20, 43, 25, 3].iter().all(|&r| !bg_role(r)));
+        assert!(bg_role(33, 917, 917) && bg_role(34, 19, 917));
+        assert!([20, 43, 25, 3, 62].iter().all(|&r| !bg_role(r, 917, 917)));
+        assert!(!bg_role(33, 25, 917)); // the column header bar (its dividers and gaps)
 
         // a navigation during the probe voids it; g0 is the value before
         let g = Cell::new(5);

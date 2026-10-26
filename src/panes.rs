@@ -738,9 +738,11 @@ pub(crate) fn next_click(prev: Option<Click>, now: Click, bg: bool, ms: u32, cx:
 // The list itself is background, and so may a row be: a row reports ROLE_SYSTEM_LISTITEM across all its columns,
 // yet without full-row select only the name is the item, so its date and size cells are empty space. confirm()
 // tells them apart after the click: a press on the name selects or opens it. Group headers, collapse buttons and
-// column headers are never background.
-pub(crate) fn bg_role(role: u32) -> bool {
-    role == ROLE_SYSTEM_LIST || role == ROLE_SYSTEM_LISTITEM
+// column headers are never background. The column header bar is a list too, a strip along the top: its gaps and
+// the dividers between columns (double-click: fit the width) report it, so a list counts only when it is most of
+// the window (`h` its height, `list_h` the window's).
+pub(crate) fn bg_role(role: u32, h: i32, list_h: i32) -> bool {
+    role == ROLE_SYSTEM_LISTITEM || role == ROLE_SYSTEM_LIST && h * 2 > list_h
 }
 
 // The generation is read before the probe and again after it: a navigation during the probe voids it.
@@ -767,9 +769,16 @@ pub(crate) unsafe fn on_background(m: &MSG) -> bool {
     if AccessibleObjectFromPoint(m.pt, &mut acc, &mut child).is_err() {
         return false;
     }
-    let bg = acc.and_then(|a| a.get_accRole(&child).ok()).is_some_and(|mut role| {
+    let mut win = RECT::default();
+    _ = GetWindowRect(m.hwnd, &mut win);
+    let bg = acc.and_then(|a| {
+        let (mut l, mut t, mut w, mut h) = (0, 0, 0, 0);
+        _ = a.accLocation(&mut l, &mut t, &mut w, &mut h, &child);
+        Some((a.get_accRole(&child).ok()?, h))
+    });
+    let bg = bg.is_some_and(|(mut role, h)| {
         let r = &role.Anonymous.Anonymous;
-        let bg = r.vt == VT_I4 && bg_role(r.Anonymous.lVal as u32);
+        let bg = r.vt == VT_I4 && bg_role(r.Anonymous.lVal as u32, h, win.bottom - win.top);
         _ = VariantClear(&mut role);
         bg
     });
