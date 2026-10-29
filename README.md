@@ -88,6 +88,13 @@ Double-clicking empty space in a pane goes up a folder (can be turned off in the
 
 Address bar: click a folder in the path to go there; click a › to list the folders inside; click the current folder or empty space, or press Ctrl+L, to type a path.
 
+## Known issues
+
+**Don't run Grids as administrator.** A user reported that PowerToys Mouse Crosshairs (and similar tools) stopped following the cursor and froze where they clicked over Grids. It happens only when Grids runs as administrator: Windows doesn't let a program without administrator rights receive mouse input over a window that has them (UIPI), so a normal PowerToys gets no mouse movement over an elevated Grids. Give both the same rights, either way:
+
+1. **Recommended**: run Grids normally. Don't open `grids.exe` with right-click → **Run as administrator**, and in the shortcut's or `grids.exe`'s **Properties → Compatibility**, clear **Run this program as an administrator**.
+2. If you need Grids as administrator, run PowerToys as administrator too: **PowerToys Settings → General → Always run as administrator**, then restart PowerToys.
+
 ## Build
 
 Needs the Rust GNU toolchain (`x86_64-pc-windows-gnu`) and MSYS2's MinGW tools (`windres`, `dlltool`, `as` in `C:\msys64\mingw64\bin`).
