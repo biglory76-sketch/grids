@@ -532,6 +532,12 @@ pub(crate) unsafe fn view_list(fv: &IFolderView2) -> HWND {
     FindWindowExW(Some(view), None, w!("SysListView32"), PCWSTR::null()).unwrap_or_default()
 }
 
+// Whether pane i's list is a DirectUIHWND: no list message reaches it, so it can't be recoloured.
+pub(crate) unsafe fn dui_list(i: usize) -> bool {
+    let view = view_of::<IShellView>(i).and_then(|v| v.GetWindow().ok());
+    view.is_some_and(|v| FindWindowExW(Some(v), None, w!("DirectUIHWND"), PCWSTR::null()).is_ok())
+}
+
 // Whether h is the file list of the view window. The list is a SysListView32 on some systems and a
 // DirectUIHWND on others, where view_list finds nothing; both are the list when they sit inside the view.
 pub(crate) unsafe fn in_view_list(view: HWND, h: HWND) -> bool {

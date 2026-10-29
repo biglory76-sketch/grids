@@ -468,15 +468,14 @@ pub(crate) unsafe extern "system" fn dark_view_proc(h: HWND, msg: u32, wp: WPARA
 
 // The themed list draws group titles ("Devices and drives" in This PC) in the light theme's navy
 // whatever colour it is given, so in dark mode a plain titled group is drawn here like the column
-// header: flat background, light title, a thin rule after it, the collapse chevron. Anything only the
-// list can draw (subtitle, task link, descriptions, footer, images, "show more") or a failed lookup
-// leaves the group to the default drawing (false). Clicks, folding and keys stay with the list.
+// header: flat background, light title, a thin rule after it, the collapse chevron. Images, "show more"
+// or a failed lookup leave the group to the default drawing (false). Clicks, folding and keys stay with
+// the list. Only the title is read: asking a shell view's list for a subtitle, task, description or
+// footer faults inside comctl32 (6.10.26100), which ends this paint or the app; shell groups have none.
 pub(crate) unsafe fn draw_group_header(cd: &NMLVCUSTOMDRAW) -> bool {
     let (dc, lv, id) = (cd.nmcd.hdc, cd.nmcd.hdr.hwndFrom, cd.nmcd.dwItemSpec);
     let mut head = [0u16; 260];
-    let mut more = [[0u16; 64]; 5];
-    let [sub, task, top, bottom, foot] = more.each_mut().map(|b| PWSTR(b.as_mut_ptr()));
-    let mask = [LVGF_HEADER, LVGF_ALIGN, LVGF_STATE, LVGF_SUBTITLE, LVGF_TASK, LVGF_DESCRIPTIONTOP, LVGF_DESCRIPTIONBOTTOM, LVGF_FOOTER, LVGF_TITLEIMAGE, LVGF_EXTENDEDIMAGE];
+    let mask = [LVGF_HEADER, LVGF_ALIGN, LVGF_STATE, LVGF_TITLEIMAGE, LVGF_EXTENDEDIMAGE];
     let states = LVGS_COLLAPSIBLE.0 | LVGS_COLLAPSED.0 | LVGS_SELECTED.0 | LVGS_FOCUSED.0 | LVGS_SUBSETED.0;
     let mut g = LVGROUP {
         cbSize: size_of::<LVGROUP>() as u32,
@@ -484,16 +483,6 @@ pub(crate) unsafe fn draw_group_header(cd: &NMLVCUSTOMDRAW) -> bool {
         stateMask: LIST_VIEW_GROUP_STATE_FLAGS(states),
         pszHeader: PWSTR(head.as_mut_ptr()),
         cchHeader: head.len() as i32,
-        pszSubtitle: sub,
-        cchSubtitle: 64,
-        pszTask: task,
-        cchTask: 64,
-        pszDescriptionTop: top,
-        cchDescriptionTop: 64,
-        pszDescriptionBottom: bottom,
-        cchDescriptionBottom: 64,
-        pszFooter: foot,
-        cchFooter: 64,
         ..Default::default()
     };
     if SendMessageW(lv, LVM_GETGROUPINFO, Some(WPARAM(id)), Some(LPARAM(&mut g as *mut _ as isize))).0 == -1 {
@@ -501,7 +490,7 @@ pub(crate) unsafe fn draw_group_header(cd: &NMLVCUSTOMDRAW) -> bool {
     }
     let st = g.state.0;
     let n = head.iter().position(|&c| c == 0).unwrap_or(0);
-    if n == 0 || more.iter().any(|b| b[0] != 0) || st & LVGS_SUBSETED.0 != 0 {
+    if n == 0 || st & LVGS_SUBSETED.0 != 0 {
         return false;
     }
     let images = SendMessageW(lv, LVM_GETIMAGELIST, Some(WPARAM(LVSIL_GROUPHEADER as usize)), None).0 != 0;
@@ -610,17 +599,23 @@ pub(crate) unsafe fn system_dark() -> Option<bool> {
 
 // Switches the theme in place: panes keep their views, so history, filter, selection, scroll and a
 // half-typed address all stay. A view still navigating gets the theme from on_nav when it lands.
+// Windows 11's newer list (DirectUIHWND, see in_view_list) takes light or dark only when it is made and
+// can't be recoloured in place, so there the panes are made again on their folders, as at start-up.
 pub(crate) unsafe fn retheme() {
-    theme_chrome();
     let (panes, popups) = app(|a| (a.panes.iter().flatten().map(|p| p.hwnd).collect::<Vec<_>>(), [a.fav_popup, a.load, a.grid, a.keys_popup, a.peek, a.matcher.as_ref().map_or(HWND::default(), |m| m.h)]));
-    for p in panes {
-        if DARK_ON.load(Ordering::Relaxed) {
-            dark_list(p);
-        } else {
-            light_list(p);
+    if (0..MAXP).any(|i| unsafe { dui_list(i) }) {
+        apply_theme();
+    } else {
+        theme_chrome();
+        for p in panes {
+            if DARK_ON.load(Ordering::Relaxed) {
+                dark_list(p);
+            } else {
+                light_list(p);
+            }
         }
+        redraw_all();
     }
-    redraw_all();
     // open popups are owned, not children: repainted as they are
     for h in popups.into_iter().filter(|h| IsWindow(Some(*h)).as_bool()) {
         _ = RedrawWindow(Some(h), None, None, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN);
