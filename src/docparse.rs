@@ -1,4 +1,5 @@
 use std::io::{Read, Seek, SeekFrom};
+#[cfg(windows)]
 use windows::Win32::Globalization::{MultiByteToWideChar, MULTI_BYTE_TO_WIDE_CHAR_FLAGS};
 
 // ---------- reading documents for the preview: text, CSV, ZIP, XML, mail (no Windows UI here) ----------
@@ -28,6 +29,7 @@ pub(crate) fn utf16(b: &[u8], be: bool) -> String {
 }
 
 /// A code page's bytes (949 = Korean) as text; a lead byte cut off at the end is dropped.
+#[cfg(windows)]
 pub(crate) fn ansi(b: &[u8], cp: u32) -> String {
     if b.is_empty() {
         return String::new();
@@ -42,6 +44,9 @@ pub(crate) fn ansi(b: &[u8], cp: u32) -> String {
         String::from_utf16_lossy(&w)
     }
 }
+
+#[cfg(not(windows))]
+pub(crate) fn ansi(b: &[u8], _cp: u32) -> String { String::from_utf8_lossy(b).into_owned() }
 
 /// Text, not a binary: no NUL in the first 8 KB (UTF-16 has a BOM, then NULs are its own).
 pub(crate) fn looks_text(b: &[u8]) -> bool {
@@ -283,6 +288,107 @@ pub(crate) fn xml_text(xml: &str, text: &[&str], para: &[&str], tab: &[&str], br
         }
     }
     out
+}
+
+// HWPX body in document order. Cells remain separate, including empty cells.
+pub(crate) fn hwpx_body(xml: &str) -> String {
+    let mut out = String::new();
+    let mut rest = xml;
+    let mut text_depth = 0usize;
+    let mut table = 0usize;
+    let mut cell = String::new();
+    let mut row: Vec<String> = Vec::new();
+    while let Some(i) = rest.find('<') {
+        if text_depth > 0 {
+            if table > 0 { cell.push_str(&unescape(&rest[..i])); } else { out.push_str(&unescape(&rest[..i])); }
+        }
+        rest = &rest[i + 1..];
+        let Some(j) = rest.find('>') else { break };
+        let tag = &rest[..j]; rest = &rest[j + 1..];
+        let close = tag.starts_with('/');
+        let empty = tag.trim_end().ends_with('/');
+        let name = tag.trim_start_matches('/').split(|c: char| c.is_whitespace() || c == '/').next().unwrap_or("");
+        match (name, close) {
+            ("hp:t", false) if !empty => text_depth += 1,
+            ("hp:t", true) => text_depth = text_depth.saturating_sub(1),
+            ("hp:tbl", false) => { if table == 0 { out.push('\n'); } table += 1; },
+            ("hp:tbl", true) => { table = table.saturating_sub(1); if table == 0 { out.push('\n'); } },
+            ("hp:tc", false) if table == 1 => cell.clear(),
+            ("hp:tc", true) if table == 1 => row.push(cell.trim().replace(['\n', '\t'], " ").replace('|', "\\|")),
+            ("hp:tr", true) if table == 1 => { out.push_str("| "); out.push_str(&row.join(" | ")); out.push_str(" |\n"); row.clear(); },
+            ("hp:p", true) => { if table > 0 { if !cell.is_empty() { cell.push(' '); } } else { out.push('\n'); } },
+            ("hp:tab", false) => { if table > 0 { cell.push(' '); } else { out.push('\t'); } },
+            ("hp:lineBreak", false) => { if table > 0 { cell.push(' '); } else { out.push('\n'); } },
+            _ => {}
+        }
+    }
+    out
+}
+
+// HWP5 BodyText records, with cell boundaries indicated by table LIST_HEADER records.
+pub(crate) fn hwp5_body(data: &[u8]) -> String {
+    let mut out = String::new();
+    let mut p = 0usize;
+    let mut table_level: Option<usize> = None;
+    let mut cell_level: Option<usize> = None;
+    let mut row = None;
+    while p + 4 <= data.len() {
+        let h = le32(data, p) as u32; p += 4;
+        let tag = h & 1023; let level = ((h >> 10) & 1023) as usize;
+        let mut len = (h >> 20) as usize;
+        if len == 0xfff { if p + 4 > data.len() { break; } len = le32(data, p) as usize; p += 4; }
+        let Some(end) = p.checked_add(len).filter(|&end| end <= data.len()) else { break };
+        let b = &data[p..end]; p = end;
+        if table_level.is_some_and(|l| level < l) && tag != 77 { table_level = None; cell_level = None; row = None; out.push('\n'); }
+        if tag == 77 { table_level = Some(level); cell_level = None; row = None; out.push('\n'); continue; }
+        if tag == 72 && table_level.is_some_and(|l| level == l) && b.len() >= 12 {
+            let r = le16(b, 10);
+            if row != Some(r) { if row.is_some() { out.push_str(" |\n"); } out.push_str("| "); row = Some(r); } else { out.push_str(" | "); }
+            cell_level = Some(level); continue;
+        }
+        if tag == 67 {
+            let u: Vec<u16> = b.chunks_exact(2).map(|c| u16::from_le_bytes([c[0],c[1]])).collect();
+            let mut v = Vec::new(); let mut i = 0;
+            while i < u.len() {
+                let c = u[i];
+                match c {
+                    9 => { v.push(9); i += 8; },
+                    10 | 13 => { i += 1; },
+                    0..=31 => { i += if matches!(c, 1..=8 | 11 | 12 | 14..=23) { 8 } else { 1 }; },
+                    _ => { v.push(c); i += 1; }
+                }
+            }
+            out.push_str(&String::from_utf16_lossy(&v));
+            if cell_level.is_some_and(|l| level > l) { out.push(' '); } else { out.push('\n'); }
+        }
+    }
+    out
+}
+
+// Align table columns for the preview's fixed-width table font.
+pub(crate) fn align_document_tables(text: &str) -> String {
+    let lines: Vec<&str> = text.lines().collect();
+    let mut out = String::new(); let mut i = 0;
+    while i < lines.len() {
+        if !lines[i].starts_with("| ") { out.push_str(lines[i]); out.push('\n'); i += 1; continue; }
+        let start = i;
+        while i < lines.len() && lines[i].starts_with("| ") { i += 1; }
+        let rows: Vec<Vec<&str>> = lines[start..i].iter().map(|l| l.trim_start_matches("| ").trim_end_matches('|').split(" | ").map(str::trim).collect()).collect();
+        let mut widths = Vec::<usize>::new();
+        for row in &rows { for (c, value) in row.iter().enumerate() { if c >= 128 { break; } if widths.len() <= c { widths.push(0); } widths[c] = widths[c].max(value.chars().map(|ch| if ch.is_ascii() { 1 } else { 2 }).sum::<usize>().min(80)); } }
+        for row in rows { out.push_str("| "); for (c, value) in row.iter().enumerate() { if c > 0 { out.push_str(" | "); } out.push_str(value); let width: usize = value.chars().map(|ch| if ch.is_ascii() { 1 } else { 2 }).sum(); if let Some(&w) = widths.get(c) { for _ in width..w { out.push(' '); } } } out.push_str(" |\n"); }
+    }
+    out
+}
+
+#[cfg(test)]
+mod hwp_tests {
+    #[test]
+    fn hwpx_cells_and_text() {
+        let x = "<hp:p><hp:t>앞</hp:t></hp:p><hp:tbl><hp:tr><hp:tc><hp:p><hp:t>가</hp:t></hp:p></hp:tc><hp:tc><hp:p><hp:t>나</hp:t></hp:p></hp:tc></hp:tr></hp:tbl>";
+        let result = super::hwpx_body(x);
+        assert!(result.contains("앞") && result.contains("| 가 | 나 |"));
+    }
 }
 
 /// "AB12" -> column 27 (zero-based), row 11.

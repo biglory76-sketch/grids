@@ -516,6 +516,7 @@ unsafe fn layout(dc: HDC, gen: usize, width: i32, text: &str, kind: TextKind, fo
         TextKind::Markdown => md_lines(text),
         TextKind::Code => text.lines().map(|l| (l.to_string(), Style::Mono)).collect(),
         TextKind::Plain => text.lines().map(|l| (l.to_string(), Style::Plain)).collect(),
+        TextKind::Document => text.lines().map(|l| (l.to_string(), if l.starts_with("| ") { Style::Mono } else { Style::Plain })).collect(),
     };
     let mut y = 0;
     let mut lines = Vec::with_capacity(src.len().min(40_000));
@@ -646,15 +647,19 @@ unsafe fn clip(dc: HDC, r: RECT, draw: impl FnOnce()) {
     _ = DeleteObject(rgn.into());
 }
 
-unsafe fn paint_text(dc: HDC, area: RECT, gen: usize, text: &str, kind: TextKind, cut: bool, font: HFONT, dpi: i32) {
+unsafe fn paint_text(dc: HDC, area: RECT, gen: usize, text: &str, kind: TextKind, cut: bool, font: HFONT, dpi: i32, pic: Option<&Pix>) {
     let s = |v: i32| v * dpi / 96;
     let f = fonts(dpi, font);
     let gutter = if kind == TextKind::Code { s(44) } else { 0 };
     let width = area.right - area.left - gutter - s(8);
-    let total = layout(dc, gen, width, text, kind, font, &f, dpi) + if cut { s(28) } else { 0 };
+    let pic_size = pic.map(|p| { let k = ((area.right - area.left) as f32 / p.w as f32).min(1.0); ((p.w as f32 * k) as i32, (p.h as f32 * k) as i32) });
+    let offset = pic_size.map_or(0, |(_, h)| h + s(20));
+    let total = offset + layout(dc, gen, width, text, kind, font, &f, dpi) + if cut { s(28) } else { 0 };
     clamp_scroll(total, area.bottom - area.top);
     let (sy, sx) = view(|v| (v.y, v.x));
     clip(dc, area, || {
+        if let (Some(p), Some((w, h))) = (pic, pic_size) { let x = (area.left + area.right - w) / 2; let y = area.top - sy; blit_bgra(dc, RECT { left: x, top: y, right: x + w, bottom: y + h }, p.w, p.h, &p.bgra); }
+        let sy = sy - offset;
         view(|v| {
             let Some((_, _, lines, _)) = v.layout.as_ref() else { return };
             let first = lines.partition_point(|l| l.y + l.h < sy);
@@ -676,7 +681,7 @@ unsafe fn paint_text(dc: HDC, area: RECT, gen: usize, text: &str, kind: TextKind
             }
         });
         if cut {
-            let y = area.top + total - s(24) - sy;
+            let y = area.top + total - offset - s(24) - sy;
             let r = RECT { left: area.left, top: y, right: area.right, bottom: y + s(24) };
             text_flags(dc, r, tr("… only the first 512 KB is shown", "… 앞부분 512 KB만 표시"), font, pal().sub, DT_SINGLELINE);
         }
@@ -870,7 +875,11 @@ pub(crate) unsafe fn paint_peek(h: HWND) {
             Some(Body::Pages { pages, total }) => paint_pages(dc, g.stage, pages, *total, font, dpi),
             Some(Body::Text { text: t, kind, cut }) => {
                 plate();
-                paint_text(dc, g.inner, gen, t, *kind, *cut, font, dpi);
+                paint_text(dc, g.inner, gen, t, *kind, *cut, font, dpi, None);
+            }
+            Some(Body::Document { pic, text: t, cut }) => {
+                plate();
+                paint_text(dc, g.inner, gen, t, TextKind::Document, *cut, font, dpi, pic.as_ref());
             }
             Some(Body::Table { rows, cut }) => {
                 plate();
