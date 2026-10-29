@@ -365,22 +365,6 @@ pub(crate) fn hwp5_body(data: &[u8]) -> String {
     out
 }
 
-// Align table columns for the preview's fixed-width table font.
-pub(crate) fn align_document_tables(text: &str) -> String {
-    let lines: Vec<&str> = text.lines().collect();
-    let mut out = String::new(); let mut i = 0;
-    while i < lines.len() {
-        if !lines[i].starts_with("| ") { out.push_str(lines[i]); out.push('\n'); i += 1; continue; }
-        let start = i;
-        while i < lines.len() && lines[i].starts_with("| ") { i += 1; }
-        let rows: Vec<Vec<&str>> = lines[start..i].iter().map(|l| l.trim_start_matches("| ").trim_end_matches('|').split(" | ").map(str::trim).collect()).collect();
-        let mut widths = Vec::<usize>::new();
-        for row in &rows { for (c, value) in row.iter().enumerate() { if c >= 128 { break; } if widths.len() <= c { widths.push(0); } widths[c] = widths[c].max(value.chars().map(|ch| if ch.is_ascii() { 1 } else { 2 }).sum::<usize>().min(80)); } }
-        for row in rows { out.push_str("| "); for (c, value) in row.iter().enumerate() { if c > 0 { out.push_str(" | "); } out.push_str(value); let width: usize = value.chars().map(|ch| if ch.is_ascii() { 1 } else { 2 }).sum(); if let Some(&w) = widths.get(c) { for _ in width..w { out.push(' '); } } } out.push_str(" |\n"); }
-    }
-    out
-}
-
 #[cfg(test)]
 mod hwp_tests {
     #[test]

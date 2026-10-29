@@ -17,7 +17,7 @@ pub(crate) enum TextKind {
     Plain,    // wrapped
     Code,     // fixed-width, not wrapped
     Markdown, // headings, bullets and code blocks styled
-    Document, // wrapped body with fixed-width table rows
+    Document, // wrapped body with table rows
 }
 
 pub(crate) enum Body {
@@ -433,63 +433,173 @@ fn office_text(path: &str, ext: &str) -> Option<Body> {
 unsafe fn hwpx_preview(path: &str, req: &PeekReq) -> Option<Body> {
     let mut f = std::fs::File::open(path).ok()?;
     let es = zip_entries(&mut f)?;
-    let pic = zip_find(&es, "Preview/PrvImage.png").and_then(|e| zip_read(&mut f, e, 16 << 20)).and_then(|b| decode_pic(&b, req.w, req.h));
-    let mut sections: Vec<&ZipEntry> = es.iter().filter(|e| e.name.starts_with("Contents/section") && e.name.ends_with(".xml")).collect();
-    sections.sort_by_key(|e| e.name.trim_start_matches("Contents/section").trim_end_matches(".xml").parse::<u32>().unwrap_or(u32::MAX));
-    let mut out = String::new(); let mut cut = false;
+    let pic = zip_find(&es, "Preview/PrvImage.png")
+        .and_then(|e| zip_read(&mut f, e, 16 << 20))
+        .and_then(|b| decode_pic(&b, req.w, req.h));
+    let mut sections: Vec<&ZipEntry> = es
+        .iter()
+        .filter(|e| e.name.starts_with("Contents/section") && e.name.ends_with(".xml"))
+        .collect();
+    sections.sort_by_key(|e| {
+        e.name
+            .trim_start_matches("Contents/section")
+            .trim_end_matches(".xml")
+            .parse::<u32>()
+            .unwrap_or(u32::MAX)
+    });
+    let mut out = String::new();
+    let mut cut = false;
     for e in sections {
-        if out.len() >= TEXT_MAX { cut = true; break; }
-        if e.size > 32 << 20 { cut = true; }
-        if let Some(b) = zip_read(&mut f, e, 32 << 20) { out.push_str(&hwpx_body(&decode_text(&b))); }
+        if out.len() >= TEXT_MAX {
+            cut = true;
+            break;
+        }
+        if e.size > 32 << 20 {
+            cut = true;
+        }
+        if let Some(b) = zip_read(&mut f, e, 32 << 20) {
+            out.push_str(&hwpx_body(&decode_text(&b)));
+        }
     }
-    if out.trim().is_empty() { out = zip_find(&es, "Preview/PrvText.txt").and_then(|e| zip_read(&mut f, e, TEXT_MAX)).map(|b| decode_text(&b)).unwrap_or_default(); }
+    if out.trim().is_empty() {
+        out = zip_find(&es, "Preview/PrvText.txt")
+            .and_then(|e| zip_read(&mut f, e, TEXT_MAX))
+            .map(|b| decode_text(&b))
+            .unwrap_or_default();
+    }
     limit_document(&mut out, &mut cut);
-    out = align_document_tables(&out);
-    limit_document(&mut out, &mut cut);
-    if pic.is_none() && out.is_empty() { None } else { Some(Body::Document { pic, text: out, cut }) }
+    if pic.is_none() && out.is_empty() {
+        None
+    } else {
+        Some(Body::Document {
+            pic,
+            text: out,
+            cut,
+        })
+    }
 }
 
 fn limit_document(out: &mut String, cut: &mut bool) {
-    if out.len() > TEXT_MAX { let mut n = TEXT_MAX; while !out.is_char_boundary(n) { n -= 1; } out.truncate(n); *cut = true; }
+    if out.len() > TEXT_MAX {
+        let mut n = TEXT_MAX;
+        while !out.is_char_boundary(n) {
+            n -= 1;
+        }
+        out.truncate(n);
+        *cut = true;
+    }
 }
 
 // HWP5: OLE streams are read through the existing Windows structured storage API.
 unsafe fn hwp_preview(path: &str, req: &PeekReq) -> Option<Body> {
     let name = HSTRING::from(path);
     let mut stg: Option<IStorage> = None;
-    for mode in [STGM_READ | STGM_SHARE_DENY_WRITE, STGM_READ | STGM_SHARE_DENY_NONE | STGM_TRANSACTED] {
+    for mode in [
+        STGM_READ | STGM_SHARE_DENY_WRITE,
+        STGM_READ | STGM_SHARE_DENY_NONE | STGM_TRANSACTED,
+    ] {
         let mut p: *mut std::ffi::c_void = std::ptr::null_mut();
-        if StgOpenStorageEx(&name, mode, STGFMT_STORAGE, 0, None, None, &IStorage::IID, &mut p).is_ok() && !p.is_null() { stg = Some(IStorage::from_raw(p)); break; }
+        if StgOpenStorageEx(
+            &name,
+            mode,
+            STGFMT_STORAGE,
+            0,
+            None,
+            None,
+            &IStorage::IID,
+            &mut p,
+        )
+        .is_ok()
+            && !p.is_null()
+        {
+            stg = Some(IStorage::from_raw(p));
+            break;
+        }
     }
     let stg = stg?;
     let read = |storage: &IStorage, s: &str| -> Option<Vec<u8>> {
-        let st = storage.OpenStream(&HSTRING::from(s), None, STGM_READ | STGM_SHARE_EXCLUSIVE, 0).ok()?;
-        let mut out = Vec::new(); let mut buf = vec![0u8; 64 * 1024];
-        loop { let mut n = 0u32; if st.Read(buf.as_mut_ptr() as _, buf.len() as u32, Some(&mut n)).is_err() || n == 0 || out.len() >= 16 << 20 { break; } out.extend_from_slice(&buf[..n as usize]); }
+        let st = storage
+            .OpenStream(&HSTRING::from(s), None, STGM_READ | STGM_SHARE_EXCLUSIVE, 0)
+            .ok()?;
+        let mut out = Vec::new();
+        let mut buf = vec![0u8; 64 * 1024];
+        loop {
+            let mut n = 0u32;
+            if st
+                .Read(buf.as_mut_ptr() as _, buf.len() as u32, Some(&mut n))
+                .is_err()
+                || n == 0
+                || out.len() >= 16 << 20
+            {
+                break;
+            }
+            out.extend_from_slice(&buf[..n as usize]);
+        }
         (!out.is_empty()).then_some(out)
     };
     let pic = read(&stg, "PrvImage").and_then(|b| decode_pic(&b, req.w, req.h));
-    let flags = read(&stg, "FileHeader").filter(|b| b.len() >= 40).map(|b| u32::from_le_bytes(b[36..40].try_into().unwrap()));
+    let flags = read(&stg, "FileHeader")
+        .filter(|b| b.len() >= 40)
+        .map(|b| u32::from_le_bytes(b[36..40].try_into().unwrap()));
     if flags.is_none_or(|f| f & 6 != 0) {
-        if let Some(p) = pic { return Some(Body::Pic(p)); }
-        return read(&stg, "PrvText").map(|b| Body::Text { text: utf16(&b, false).trim_end_matches('\0').to_string(), kind: TextKind::Plain, cut: false });
+        if let Some(p) = pic {
+            return Some(Body::Pic(p));
+        }
+        return read(&stg, "PrvText").map(|b| Body::Text {
+            text: utf16(&b, false).trim_end_matches('\0').to_string(),
+            kind: TextKind::Plain,
+            cut: false,
+        });
     }
-    let mut out = String::new(); let mut cut = false;
+    let mut out = String::new();
+    let mut cut = false;
     if let Some(flags) = flags {
-        if let Ok(body) = stg.OpenStorage(&HSTRING::from("BodyText"), None, STGM_READ | STGM_SHARE_EXCLUSIVE, std::ptr::null(), 0) {
+        if let Ok(body) = stg.OpenStorage(
+            &HSTRING::from("BodyText"),
+            None,
+            STGM_READ | STGM_SHARE_EXCLUSIVE,
+            std::ptr::null(),
+            0,
+        ) {
             for n in 0..1000 {
-                if out.len() >= TEXT_MAX { cut = true; break; }
-                let Some(data) = read(&body, &format!("Section{n}")) else { break };
-                let data = if flags & 1 != 0 { match miniz_oxide::inflate::decompress_to_vec_with_limit(&data, 32 << 20) { Ok(v) => v, Err(e) if !e.output.is_empty() => { cut = true; e.output }, Err(_) => break } } else { data };
+                if out.len() >= TEXT_MAX {
+                    cut = true;
+                    break;
+                }
+                let Some(data) = read(&body, &format!("Section{n}")) else {
+                    break;
+                };
+                let data = if flags & 1 != 0 {
+                    match miniz_oxide::inflate::decompress_to_vec_with_limit(&data, 32 << 20) {
+                        Ok(v) => v,
+                        Err(e) if !e.output.is_empty() => {
+                            cut = true;
+                            e.output
+                        }
+                        Err(_) => break,
+                    }
+                } else {
+                    data
+                };
                 out.push_str(&hwp5_body(&data));
             }
         }
     }
-    if out.trim().is_empty() { out = read(&stg, "PrvText").map(|b| utf16(&b, false).trim_end_matches('\0').to_string()).unwrap_or_default(); }
+    if out.trim().is_empty() {
+        out = read(&stg, "PrvText")
+            .map(|b| utf16(&b, false).trim_end_matches('\0').to_string())
+            .unwrap_or_default();
+    }
     limit_document(&mut out, &mut cut);
-    out = align_document_tables(&out);
-    limit_document(&mut out, &mut cut);
-    if pic.is_none() && out.is_empty() { None } else { Some(Body::Document { pic, text: out, cut }) }
+    if pic.is_none() && out.is_empty() {
+        None
+    } else {
+        Some(Body::Document {
+            pic,
+            text: out,
+            cut,
+        })
+    }
 }
 
 // ---------- cards: the facts, with the big icon ----------
