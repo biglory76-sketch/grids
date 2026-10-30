@@ -166,30 +166,116 @@ pub(crate) unsafe fn start_reveal(main: HWND) {
     SetTimer(Some(main), TIMER_REVEAL, 120, None);
 }
 
-// Roots above the shell tree, as in Explorer's navigation pane: Desktop, Downloads and Documents, then the
-// favourites (the ★ list) in their order. Runs on the status timer; does nothing until the favourites change,
-// and then only swaps these roots, so the shell tree below keeps what is expanded.
-pub(crate) unsafe fn sync_tree_favs() {
-    let Some((t, favs)) = app(|a| a.tree.clone().filter(|_| a.tree_favs.as_ref() != Some(&a.s.favs)).map(|t| (t, a.s.favs.clone()))) else { return };
-    for old in app(|a| std::mem::take(&mut a.tree_quick)) {
-        _ = t.RemoveRoot(&old);
+// ---------- quick list (sidebar, above the tree) ----------
+// Desktop, then the favourites (the ★ list) in their order, like the pinned block of Explorer's navigation
+// pane. Its own control, sized to fit, so it stays put while the tree below scrolls on its own.
+
+#[implement(INameSpaceTreeControlEvents)]
+pub(crate) struct QuickEvents;
+
+impl INameSpaceTreeControlEvents_Impl for QuickEvents_Impl {
+    fn OnItemClick(&self, psi: Ref<IShellItem>, hit: u32, click: u32) -> Result<()> {
+        let on_item = hit & NSTCEHT_ONITEM.0 as u32 != 0 && click & NSTCECT_LBUTTON.0 as u32 != 0;
+        if let (true, Some(si)) = (on_item, psi.as_ref()) {
+            unsafe { browse_item(app(|a| a.s.active), si) };
+        }
+        Err(S_FALSE.into())
     }
-    let mut paths: Vec<String> = [FOLDERID_Desktop, FOLDERID_Downloads, FOLDERID_Documents]
-        .iter()
-        .filter_map(|id| SHGetKnownFolderPath(id, KF_FLAG_DEFAULT, None).ok().map(|p| pwstr(p)))
-        .collect();
+    fn OnSelectionChanged(&self, _: Ref<IShellItemArray>) -> Result<()> {
+        Ok(())
+    }
+    fn OnPropertyItemCommit(&self, _: Ref<IShellItem>) -> Result<()> {
+        Err(E_NOTIMPL.into())
+    }
+    fn OnItemStateChanging(&self, _: Ref<IShellItem>, _: u32, _: u32) -> Result<()> {
+        Err(E_NOTIMPL.into())
+    }
+    fn OnItemStateChanged(&self, _: Ref<IShellItem>, _: u32, _: u32) -> Result<()> {
+        Err(E_NOTIMPL.into())
+    }
+    fn OnKeyboardInput(&self, msg: u32, wp: WPARAM, _: LPARAM) -> Result<()> {
+        // Enter opens the selected entry in the active pane
+        if msg == WM_KEYDOWN && wp.0 == VK_RETURN.0 as usize {
+            if let Some(t) = app(|a| a.quick.clone()) {
+                if let Ok(si) = unsafe { t.GetSelectedItems() }.and_then(|arr| unsafe { arr.GetItemAt(0) }) {
+                    unsafe { browse_item(app(|a| a.s.active), &si) };
+                    return Ok(());
+                }
+            }
+        }
+        Err(S_FALSE.into())
+    }
+    fn OnBeforeExpand(&self, _: Ref<IShellItem>) -> Result<()> {
+        Err(E_NOTIMPL.into())
+    }
+    fn OnAfterExpand(&self, _: Ref<IShellItem>) -> Result<()> {
+        Err(E_NOTIMPL.into())
+    }
+    fn OnBeginLabelEdit(&self, _: Ref<IShellItem>) -> Result<()> {
+        Err(E_NOTIMPL.into())
+    }
+    fn OnEndLabelEdit(&self, _: Ref<IShellItem>) -> Result<()> {
+        Err(E_NOTIMPL.into())
+    }
+    fn OnGetToolTip(&self, _: Ref<IShellItem>, _: PWSTR, _: i32) -> Result<()> {
+        Err(E_NOTIMPL.into())
+    }
+    fn OnBeforeItemDelete(&self, _: Ref<IShellItem>) -> Result<()> {
+        Err(E_NOTIMPL.into())
+    }
+    fn OnItemAdded(&self, _: Ref<IShellItem>, _: BOOL) -> Result<()> {
+        Err(E_NOTIMPL.into())
+    }
+    fn OnItemDeleted(&self, _: Ref<IShellItem>, _: BOOL) -> Result<()> {
+        Err(E_NOTIMPL.into())
+    }
+    fn OnBeforeContextMenu(&self, _: Ref<IShellItem>, _: *const GUID, _: *mut *mut core::ffi::c_void) -> Result<()> {
+        Err(E_NOTIMPL.into())
+    }
+    fn OnAfterContextMenu(&self, _: Ref<IShellItem>, _: Ref<IContextMenu>, _: *const GUID, _: *mut *mut core::ffi::c_void) -> Result<()> {
+        Err(E_NOTIMPL.into())
+    }
+    fn OnBeforeStateImageChange(&self, _: Ref<IShellItem>) -> Result<()> {
+        Err(E_NOTIMPL.into())
+    }
+    fn OnGetDefaultIconIndex(&self, _: Ref<IShellItem>, _: *mut i32, _: *mut i32) -> Result<()> {
+        Err(E_NOTIMPL.into())
+    }
+}
+
+// No expandos and nothing enumerated under the entries: a flat list of folders to jump to.
+pub(crate) unsafe fn create_quick(main: HWND) -> Result<(INameSpaceTreeControl, HWND)> {
+    let t: INameSpaceTreeControl = CoCreateInstance(&NamespaceTreeControl, None, CLSCTX_INPROC_SERVER)?;
+    let style = NSTCS_NOINFOTIP.0 | NSTCS_FULLROWSELECT.0;
+    t.Initialize(main, &RECT::default(), style as u32)?;
+    let ev: INameSpaceTreeControlEvents = QuickEvents.into();
+    t.TreeAdvise(&ev)?;
+    let h = t.cast::<IOleWindow>()?.GetWindow()?;
+    Ok((t, h))
+}
+
+// Runs on the status timer; does nothing until the favourites change, then rebuilds the list and relays out.
+pub(crate) unsafe fn sync_tree_favs() {
+    let Some((t, favs)) = app(|a| a.quick.clone().filter(|_| a.tree_favs.as_ref() != Some(&a.s.favs)).map(|t| (t, a.s.favs.clone()))) else { return };
+    _ = t.RemoveAllRoots();
+    let mut paths: Vec<String> = SHGetKnownFolderPath(&FOLDERID_Desktop, KF_FLAG_DEFAULT, None).ok().map(|p| pwstr(p)).into_iter().collect();
     for f in &favs {
         let f = f.trim_end_matches('\\');
         if !paths.iter().any(|p| p.eq_ignore_ascii_case(f)) {
             paths.push(f.to_string());
         }
     }
-    let mut quick = Vec::new();
+    let mut rows = 0;
     for p in paths.iter().filter(|p| Path::new(p.as_str()).is_dir()) {
         let Ok(item) = SHCreateItemFromParsingName::<_, _, IShellItem>(&HSTRING::from(p.as_str()), None) else { continue };
-        if t.InsertRoot(quick.len() as i32, &item, SHCONTF_FOLDERS.0 as u32, NSTCRS_VISIBLE.0 as u32, None).is_ok() {
-            quick.push(item);
+        if t.AppendRoot(&item, 0, NSTCRS_VISIBLE.0 as u32, None).is_ok() {
+            rows += 1;
         }
     }
-    app(|a| (a.tree_quick, a.tree_favs) = (quick, Some(favs)));
+    let th = app(|a| a.quick_hwnd);
+    let row_h = FindWindowExW(Some(th), None, w!("SysTreeView32"), PCWSTR::null())
+        .map(|tv| SendMessageW(tv, windows::Win32::UI::Controls::TVM_GETITEMHEIGHT, None, None).0 as i32)
+        .unwrap_or(0);
+    app(|a| (a.tree_favs, a.quick_rows, a.quick_row_h) = (Some(favs), rows, row_h));
+    relayout();
 }

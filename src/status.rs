@@ -265,6 +265,13 @@ pub(crate) unsafe fn status_base(i: usize, path: &str, main: HWND, fv: &IFolderV
             dirs = s.dirs;
         }
         parts.push(if ko { format!("{sel}개 선택") } else { format!("{sel} selected") });
+        // one item: its tags (PDF, HWP ... have no Tags column, so this is where theirs show)
+        if sel == 1 && !busy {
+            let one = fv.GetSelection(false).ok().and_then(|arr| arr.GetItemAt(0).ok());
+            if let Some(t) = one.and_then(|it| it.GetDisplayName(SIGDN_FILESYSPATH).ok()).and_then(|p| tag_note(&pwstr(p))) {
+                parts.push(t);
+            }
+        }
     }
     want_size(&dirs, busy);
     let head = parts.join("     ·     ");

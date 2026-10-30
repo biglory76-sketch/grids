@@ -199,12 +199,17 @@ pub(crate) unsafe fn relayout() {
         let g = geo(a);
         let s = |v: i32| v * a.dpi / 96;
         let sr = side_rect(&g);
-        let tree = RECT { left: sr.left + s(2), top: sr.top + s(4), right: sr.right - s(2), bottom: sr.bottom - s(2) };
-        let mut moves = if g.tree { vec![(a.tree_hwnd, tree)] } else { Vec::new() };
-        let mut shown = vec![(a.tree_hwnd, g.tree)];
+        let full = RECT { left: sr.left + s(2), top: sr.top + s(4), right: sr.right - s(2), bottom: sr.bottom - s(2) };
+        // the quick list on top, as tall as its rows (at most half the sidebar), the tree under it
+        let rows_h = a.quick_rows as i32 * if a.quick_row_h > 0 { a.quick_row_h } else { s(22) } + s(6);
+        let qh = if a.quick.is_some() && a.quick_rows > 0 { rows_h.min((full.bottom - full.top) / 2) } else { 0 };
+        let quick = RECT { bottom: full.top + qh, ..full };
+        let tree = RECT { top: full.top + qh + if qh > 0 { s(8) } else { 0 }, ..full };
+        let mut moves = if g.tree { vec![(a.tree_hwnd, tree), (a.quick_hwnd, quick)] } else { Vec::new() };
+        let mut shown = vec![(a.tree_hwnd, g.tree), (a.quick_hwnd, g.tree && qh > 0)];
         let mut x = g.pad;
         let tb = |id: i32| unsafe { GetDlgItem(Some(a.main), id) }.unwrap_or_default();
-        for (id, w) in [(ID_TB_LAYOUT, s(70)), (ID_TB_SAVE, s(32)), (ID_TB_LOAD, s(32)), (ID_TB_VIEW, s(32)), (ID_TB_FAV, s(32)), (ID_TB_MARK, s(32))] {
+        for (id, w) in [(ID_TB_LAYOUT, s(70)), (ID_TB_SAVE, s(32)), (ID_TB_LOAD, s(32)), (ID_TB_VIEW, s(32)), (ID_TB_FAV, s(32)), (ID_TB_MARK, s(32)), (ID_TB_TAG, s(32))] {
             moves.push((tb(id), RECT { left: x, top: s(5), right: x + w, bottom: s(5) + s(24) }));
             x += w + s(4);
         }
@@ -643,7 +648,7 @@ pub(crate) unsafe fn apply_theme() {
 
 // Everything but the panes' Explorer lists: tooltips, app mode (menus, scrollbars), title bar, tree, accent.
 pub(crate) unsafe fn theme_chrome() {
-    let (main, dark, tree, accent, tip) = app(|a| (a.main, a.s.dark, a.tree_hwnd, a.s.accent_now(), a.tip));
+    let (main, dark, tree, quick, accent, tip) = app(|a| (a.main, a.s.dark, a.tree_hwnd, a.quick_hwnd, a.s.accent_now(), a.tip));
     // tooltips: dark on dark, back to the default on light (these windows outlive the theme switch)
     let tip_theme = |t: HWND| {
         if !t.0.is_null() {
@@ -664,7 +669,8 @@ pub(crate) unsafe fn theme_chrome() {
     _ = DwmSetWindowAttribute(main, DWMWINDOWATTRIBUTE(20), &on as *const _ as _, 4); // immersive dark title bar
     let caption = cref(pal().bg);
     _ = DwmSetWindowAttribute(main, DWMWA_CAPTION_COLOR, &caption as *const _ as _, 4);
-    if let Ok(tv) = FindWindowExW(Some(tree), None, w!("SysTreeView32"), PCWSTR::null()) {
+    for host in [tree, quick].into_iter().filter(|h| !h.0.is_null()) {
+        let Ok(tv) = FindWindowExW(Some(host), None, w!("SysTreeView32"), PCWSTR::null()) else { continue };
         _ = SetWindowTheme(tv, if dark { w!("DarkMode_Explorer") } else { w!("Explorer") }, PCWSTR::null());
         let colour = |c: u32| LPARAM(if dark { cref(c).0 as isize } else { -1 }); // -1: system default
         SendMessageW(tv, TVM_SETBKCOLOR, None, Some(colour(pal().card)));

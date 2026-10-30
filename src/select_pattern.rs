@@ -41,20 +41,20 @@ pub(crate) fn match_geo(label_w: i32, fh: i32, dpi: i32) -> MatchGeo {
     MatchGeo { w, h, label, field, edit }
 }
 
-pub(crate) fn match_label(desel: bool) -> &'static str {
-    if desel {
-        tr("Deselect", "선택 해제")
-    } else {
-        tr("Select", "선택")
+pub(crate) fn match_label(mode: &MatchMode) -> &'static str {
+    match mode {
+        MatchMode::Deselect => tr("Deselect", "선택 해제"),
+        MatchMode::Select => tr("Select", "선택"),
+        MatchMode::Tag(_) => tr("Tags", "태그"),
     }
 }
 
-pub(crate) unsafe fn match_geo_now(desel: bool) -> MatchGeo {
+pub(crate) unsafe fn match_geo_now(mode: &MatchMode) -> MatchGeo {
     let (font, fh, dpi) = app(|a| (a.font, a.fh, a.dpi));
     let dc = GetDC(None);
     let old = SelectObject(dc, font.into());
     let mut sz = SIZE::default();
-    _ = GetTextExtentPoint32W(dc, &match_label(desel).encode_utf16().collect::<Vec<_>>(), &mut sz);
+    _ = GetTextExtentPoint32W(dc, &match_label(mode).encode_utf16().collect::<Vec<_>>(), &mut sz);
     SelectObject(dc, old);
     ReleaseDC(None, dc);
     match_geo(sz.cx, fh, dpi)
@@ -62,12 +62,17 @@ pub(crate) unsafe fn match_geo_now(desel: bool) -> MatchGeo {
 
 // Opens over the top-left of pane i's file list, kept inside the monitor's work area.
 pub(crate) unsafe fn open_match(i: usize, desel: bool) {
-    let (main, font, open, last, path) = app(|a| (a.main, a.font, a.matcher.is_some(), a.match_last.clone(), a.s.paths[i].clone()));
+    let last = app(|a| a.match_last.clone());
+    open_box(i, if desel { MatchMode::Deselect } else { MatchMode::Select }, &last);
+}
+
+pub(crate) unsafe fn open_box(i: usize, mode: MatchMode, last: &str) {
+    let (main, font, open, path) = app(|a| (a.main, a.font, a.matcher.is_some(), a.s.paths[i].clone()));
     let Some(fv) = view_of::<IFolderView2>(i) else { return };
     if open {
         return;
     }
-    let g = match_geo_now(desel);
+    let g = match_geo_now(&mode);
     let mut rc = RECT::default();
     _ = GetWindowRect(view_list(&fv), &mut rc);
     let mut mi = MONITORINFO { cbSize: size_of::<MONITORINFO>() as u32, ..Default::default() };
@@ -84,7 +89,7 @@ pub(crate) unsafe fn open_match(i: usize, desel: bool) {
     let edit = child(h, w!("EDIT"), PCWSTR(HSTRING::from(last).as_ptr()),ES_AUTOHSCROLL as u32, WINDOW_EX_STYLE(0), 1, font);
     let e = g.edit;
     _ = MoveWindow(edit, e.left, e.top, e.right - e.left, e.bottom - e.top, false);
-    app(|a| a.matcher = Some(Matcher { h, edit, pane: i, path, desel }));
+    app(|a| a.matcher = Some(Matcher { h, edit, pane: i, path, mode }));
     _ = SetFocus(Some(edit));
     SendMessageW(edit, EM_SETSEL, Some(WPARAM(0)), Some(LPARAM(-1)));
 }
@@ -119,8 +124,14 @@ pub(crate) unsafe fn bulk_select(fv: &IFolderView2, mut each: impl FnMut(i32) ->
 
 // Enter in the box (Shift+Enter: the other mode). Files and ZIPs whose name matches; folders are left alone.
 pub(crate) unsafe fn run_match(flip: bool) {
-    let Some((h, edit, i, path, desel)) = app(|a| a.matcher.as_ref().map(|m| (m.h, m.edit, m.pane, m.path.clone(), m.desel))) else { return };
-    let desel = desel != flip;
+    let Some((h, edit, i, path, mode)) = app(|a| a.matcher.as_ref().map(|m| (m.h, m.edit, m.pane, m.path.clone(), m.mode.clone()))) else { return };
+    if let MatchMode::Tag(items) = &mode {
+        let text = text_of(edit);
+        _ = DestroyWindow(h);
+        focus_view(i);
+        return apply_tags(i, items, &text);
+    }
+    let desel = (mode == MatchMode::Deselect) != flip;
     let fv = view_of::<IFolderView2>(i).filter(|_| app(|a| i < a.s.panes() && a.s.paths[i] == path));
     let Some(fv) = fv else {
         _ = MessageBeep(MB_ICONWARNING); // pane gone or moved on since the box opened
@@ -190,13 +201,13 @@ pub(crate) unsafe fn invert_selection(i: usize) {
 }
 
 pub(crate) unsafe fn paint_match(h: HWND) {
-    let desel = app(|a| a.matcher.as_ref().is_some_and(|m| m.desel));
-    let g = match_geo_now(desel);
+    let mode = app(|a| a.matcher.as_ref().map_or(MatchMode::Select, |m| m.mode.clone()));
+    let g = match_geo_now(&mode);
     let font = app(|a| a.font);
     buffered(h, |dc, rc| {
         fill(dc, rc, pal().card);
         frame(dc, rc, 1, pal().line);
-        text(dc, g.label, match_label(desel), font, pal().sub, DT_LEFT);
+        text(dc, g.label, match_label(&mode), font, pal().sub, DT_LEFT);
         fill(dc, g.field, pal().pill);
     });
 }

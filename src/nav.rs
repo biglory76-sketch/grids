@@ -959,12 +959,23 @@ impl ICommDlgBrowser_Impl for Host_Impl {
             if filter_keeps_unnamed(sf.GetAttributesOf(&[pidl], &mut attr).ok().map(|_| attr)) {
                 return Ok(()); // folders stay, so a filtered pane can still be navigated
             }
+            // "#tag" parts match tags, the rest match names; either one is enough
+            let (tagq, names): (Vec<&str>, Vec<&str>) = spec.split(';').partition(|t| t.starts_with('#'));
             let mut sr = STRRET::default();
             let mut name = PWSTR::null();
             sf.GetDisplayNameOf(pidl, SHGDNF(SHGDN_INFOLDER.0 | SHGDN_FORPARSING.0), &mut sr)?;
             StrRetToStrW(&mut sr, Some(pidl), &mut name)?;
-            let hit = PathMatchSpecW(PCWSTR(name.0), &HSTRING::from(spec)).as_bool();
+            let mut hit = !names.is_empty() && PathMatchSpecW(PCWSTR(name.0), &HSTRING::from(names.join(";"))).as_bool();
             CoTaskMemFree(Some(name.0 as _));
+            if !hit && !tagq.is_empty() {
+                let mut sr = STRRET::default();
+                let mut full = PWSTR::null();
+                if sf.GetDisplayNameOf(pidl, SHGDN_FORPARSING, &mut sr).is_ok() && StrRetToStrW(&mut sr, Some(pidl), &mut full).is_ok() {
+                    let path = pwstr(full);
+                    let q: Vec<String> = tagq.iter().map(|t| t.trim_start_matches('#').to_string()).collect();
+                    hit = tags_match(&all_tags(&path), &q);
+                }
+            }
             if hit {
                 Ok(())
             } else {

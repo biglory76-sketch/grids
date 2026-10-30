@@ -143,6 +143,10 @@ pub(crate) unsafe fn key(m: &MSG) -> bool {
             app(|x| x.held = Some(VK_A.0));
             open_match(a, false);
         }
+        VK_G if ctrl && shift && !alt => {
+            app(|x| x.held = Some(VK_G.0));
+            open_tags();
+        }
         VK_DOWN if alt && !ctrl && !shift => recent_menu(a),
         VK_F3 if !ctrl && !shift && !alt && list() => {
             if m.lParam.0 & (1 << 30) == 0 {

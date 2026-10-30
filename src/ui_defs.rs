@@ -18,6 +18,7 @@ pub(crate) const ID_TB_THEME: i32 = 205;
 pub(crate) const ID_TB_FAV: i32 = 206;
 pub(crate) const ID_TB_VIEW: i32 = 203;
 pub(crate) const ID_TB_MARK: i32 = 207; // green-arrow folder icon on the selected folders
+pub(crate) const ID_TB_TAG: i32 = 208; // tags on the selected files
 pub(crate) const ID_DRIVE: i32 = 1500; // + 0..25: drive buttons A: … Z:
 // menu ids
 pub(crate) const ID_HIDDEN: usize = 1100;
@@ -32,6 +33,7 @@ pub(crate) const ID_EXT: usize = 1108;
 pub(crate) const ID_HOTKEY: usize = 1109;
 pub(crate) const ID_FOLLOW: usize = 1110;
 pub(crate) const ID_TABS: usize = 1111;
+pub(crate) const ID_TAGCOL: usize = 1112;
 pub(crate) const HOME: &str = "https://github.com/efww/grids";
 pub(crate) const ID_ACCENT: usize = 1400; // + preset index
 pub(crate) const ID_ACCENT_PICK: usize = 1410;
@@ -161,6 +163,7 @@ pub(crate) fn glyph(id: i32) -> &'static str {
         ID_TB_SAVE => "\u{E74E}",
         ID_TB_LOAD => "\u{E838}",
         ID_TB_FAV => "\u{E734}",
+        ID_TB_TAG => "\u{E8EC}",
         ID_TB_THEME if DARK_ON.load(Ordering::Relaxed) => "\u{E706}", // sun: back to light
         ID_TB_THEME => "\u{E708}",                                     // moon: go dark
         _ => "\u{E890}",
@@ -192,6 +195,7 @@ Ctrl+Shift+E\tHide / show the folder tree (its width is kept)\n\
 Ctrl+Shift+O\tOpen the folders of Explorer windows and tabs in panes (panes already showing one stay put)\n\
 Ctrl+Shift+C\tCopy the full path of the selected items (or of the current folder)\n\
 Num+ / Ctrl+Shift+A\tSelect files by pattern (*.jpg;*.png or part of a name; Shift+Enter deselects)\n\
+Ctrl+Shift+G\tTags on the selected files (filter: #tag)\n\
 Num−\tDeselect files by pattern\n\
 Num*\tInvert the selection\n\
 Ctrl+F\tFilter (*.pdf;*.txt or part of a name; folders always show)\n\
@@ -235,6 +239,7 @@ Ctrl+Shift+E\t폴더 트리 숨기기 / 보이기 (폭은 그대로 유지)\n\
 Ctrl+Shift+O\t탐색기 창·탭의 폴더를 패널로 가져오기 (이미 그 폴더를 연 패널은 그대로)\n\
 Ctrl+Shift+C\t선택한 항목(없으면 현재 폴더)의 전체 경로 복사\n\
 Num+ / Ctrl+Shift+A\t패턴으로 파일 선택 (*.jpg;*.png 또는 이름 일부, Shift+Enter는 선택 해제)\n\
+Ctrl+Shift+G\t선택한 파일에 태그 붙이기 (필터 칸에 #태그로 찾기)\n\
 Num−\t패턴으로 파일 선택 해제\n\
 Num*\t선택 반전\n\
 Ctrl+F\t필터 (*.pdf;*.txt 또는 이름 일부, 폴더는 항상 표시)\n\

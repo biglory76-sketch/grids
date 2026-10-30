@@ -633,9 +633,10 @@ pub(crate) fn human(b: u64) -> String {
 }
 
 /// "pdf; *.txt" -> "*pdf*;*.txt" for PathMatchSpec: plain words match anywhere in the name.
+/// "#tag" stays as it is: it matches files by their tags (tags.rs), not by name.
 pub(crate) fn filter_spec(text: &str) -> String {
-    let parts = text.split(';').map(str::trim).filter(|t| !t.is_empty());
-    let parts = parts.map(|t| if t.contains(['*', '?']) { t.to_string() } else { format!("*{t}*") });
+    let parts = text.split(';').map(str::trim).filter(|t| !t.is_empty() && *t != "#");
+    let parts = parts.map(|t| if t.starts_with('#') || t.contains(['*', '?']) { t.to_string() } else { format!("*{t}*") });
     parts.collect::<Vec<_>>().join(";")
 }
 

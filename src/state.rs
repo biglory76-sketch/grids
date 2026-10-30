@@ -22,8 +22,11 @@ pub(crate) struct App {
     pub(crate) tree: Option<INameSpaceTreeControl>,
     pub(crate) tree_hwnd: HWND,
     pub(crate) tree_input: bool, // a click/key reached the tree since its last selection change
-    pub(crate) tree_quick: Vec<IShellItem>, // roots above the shell tree: Desktop, Downloads, Documents, favourites
-    pub(crate) tree_favs: Option<Vec<String>>, // the favourites those roots were made for
+    pub(crate) quick: Option<INameSpaceTreeControl>, // sidebar list above the tree: Desktop, then the favourites
+    pub(crate) quick_hwnd: HWND,
+    pub(crate) quick_rows: usize, // entries in it
+    pub(crate) quick_row_h: i32,  // its row height in px (0 = not known yet)
+    pub(crate) tree_favs: Option<Vec<String>>, // the favourites the list was made for
     pub(crate) font: HFONT,
     pub(crate) icon_font: HFONT,
     pub(crate) fh: i32, // UI font line height in px
@@ -90,13 +93,21 @@ pub(crate) struct App {
     pub(crate) focus_wait: bool,             // TIMER_FOCUS running
 }
 
-// The Num+ / Num− box: popup, its edit, the pane it acts on, that pane's folder when it opened, deselect mode.
+// What Enter in the box does: select / deselect by pattern, or set tags on these items.
+#[derive(Clone, PartialEq)]
+pub(crate) enum MatchMode {
+    Select,
+    Deselect,
+    Tag(Vec<String>),
+}
+
+// The Num+ / Num− box (and the tag box): popup, its edit, the pane it acts on, that pane's folder when it opened, deselect mode.
 pub(crate) struct Matcher {
     pub(crate) h: HWND,
     pub(crate) edit: HWND,
     pub(crate) pane: usize,
     pub(crate) path: String,
-    pub(crate) desel: bool,
+    pub(crate) mode: MatchMode,
 }
 
 thread_local! {
@@ -106,7 +117,10 @@ thread_local! {
         tree: None,
         tree_hwnd: HWND::default(),
         tree_input: false,
-        tree_quick: Vec::new(),
+        quick: None,
+        quick_hwnd: HWND::default(),
+        quick_rows: 0,
+        quick_row_h: 0,
         tree_favs: None,
         font: HFONT::default(),
         icon_font: HFONT::default(),
