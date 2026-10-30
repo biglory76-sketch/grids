@@ -29,6 +29,7 @@ pub(crate) struct Session {
     pub(crate) tabs_on: bool,          // tab strips shown (View menu), app-wide; the tabs themselves are kept while off
     pub(crate) tabs: Vec<Vec<String>>, // per pane: its tabs' folders; the current one's entry is stale, paths[i] is the truth. <2 = no tabs
     pub(crate) tab: Vec<usize>,        // per pane: current tab
+    pub(crate) mark_icon: String,      // folder-mark button's icon, "path,index" (empty = not picked yet), app-wide
 }
 
 impl Default for Session {
@@ -59,6 +60,7 @@ impl Default for Session {
             tabs_on: false,
             tabs: vec![Vec::new(); MAXP],
             tab: vec![0; MAXP],
+            mark_icon: String::new(),
         }
     }
 }
@@ -147,6 +149,7 @@ impl Session {
                 "tabs" => s.tabs_on = v.trim() == "1",
                 "lang" => s.ko = v.trim() == "ko",
                 "session" => s.file = v.trim().to_string(),
+                "markicon" => s.mark_icon = v.trim().to_string(),
                 "fav" if !v.trim().is_empty() => s.favs.push(v.trim().to_string()),
                 // older Grids skip it (no p/v/c/t slot key); anything but a full permutation is ignored
                 "order" => {
@@ -205,6 +208,9 @@ impl Session {
         o += &format!("lang={}\n", if self.ko { "ko" } else { "en" });
         if !self.file.is_empty() {
             o += &format!("session={}\n", self.file);
+        }
+        if !self.mark_icon.is_empty() {
+            o += &format!("markicon={}\n", self.mark_icon);
         }
         if !self.order.is_empty() {
             o += &format!("order={}\n", join(&self.order));

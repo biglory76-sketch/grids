@@ -116,6 +116,10 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 draw_button(&*(lp.0 as *const DRAWITEMSTRUCT));
                 return LRESULT(1);
             }
+            // right-click on the folder-icon button: choose its icon in Windows' Change Icon dialog
+            WM_CONTEXTMENU if GetDlgItem(Some(h), ID_TB_MARK).is_ok_and(|b| b.0 as usize == wp.0) => {
+                pick_mark_icon();
+            }
             WM_TIMER if wp.0 == TIMER_REVEAL => {
                 _ = KillTimer(Some(h), TIMER_REVEAL);
                 reveal_tree_selection();
@@ -577,7 +581,7 @@ pub(crate) fn toolbar_tips() -> [(i32, &'static str, &'static str); 7] {
         (ID_TB_LOAD, tr("Load", "불러오기"), tr("Load a session", "세션 불러오기")),
         (ID_TB_VIEW, tr("View", "보기"), tr("View: hidden files · extensions · colours · language · help", "보기: 숨김 파일 · 확장명 · 선택 색 · 언어 · 도움말")),
         (ID_TB_FAV, tr("Favourites", "즐겨찾기"), tr("Favourite folders (Ctrl+B; open in the active pane)", "즐겨찾기 폴더 (Ctrl+B, 선택한 패널에서 열기)")),
-        (ID_TB_MARK, tr("Folder icon", "폴더 아이콘"), tr("Green-arrow icon on the selected folders (none selected: this folder); again to restore", "선택한 폴더(선택 없으면 지금 폴더) 아이콘을 초록 화살표로 — 다시 누르면 원래대로")),
+        (ID_TB_MARK, tr("Folder icon", "폴더 아이콘"), tr("Folder icon on the selected folders (none selected: this folder); again to restore. Right-click: choose the icon", "선택한 폴더(선택 없으면 지금 폴더) 아이콘 바꾸기 — 다시 누르면 원래대로. 오른쪽 클릭: 아이콘 고르기")),
         (ID_TB_THEME, tr("Theme", "테마"), tr("Light / dark theme", "라이트 / 다크 테마")),
     ]
 }
