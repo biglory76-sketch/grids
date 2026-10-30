@@ -66,6 +66,7 @@ mod select_pattern;
 mod keyboard;
 mod tabs;
 mod window_ui;
+mod folder_mark;
 
 use ui_defs::*;
 // explicit, so it wins over the same name glob-imported from windows (a glob clash would turn match patterns into bindings)
@@ -73,6 +74,7 @@ use ui_defs::EN_CHANGE;
 use session::*;
 use geometry::*;
 use state::*;
+use folder_mark::*;
 use fonts::*;
 use draw::*;
 use nav::*;
@@ -263,6 +265,7 @@ fn main() -> Result<()> {
         }
         if let Ok((t, th)) = create_tree(main) {
             app(|a| (a.tree, a.tree_hwnd) = (Some(t), th));
+            sync_tree_favs();
         }
         apply_theme();
         apply_font();

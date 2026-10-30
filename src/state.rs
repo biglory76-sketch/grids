@@ -22,6 +22,8 @@ pub(crate) struct App {
     pub(crate) tree: Option<INameSpaceTreeControl>,
     pub(crate) tree_hwnd: HWND,
     pub(crate) tree_input: bool, // a click/key reached the tree since its last selection change
+    pub(crate) tree_quick: Vec<IShellItem>, // roots above the shell tree: Desktop, Downloads, Documents, favourites
+    pub(crate) tree_favs: Option<Vec<String>>, // the favourites those roots were made for
     pub(crate) font: HFONT,
     pub(crate) icon_font: HFONT,
     pub(crate) fh: i32, // UI font line height in px
@@ -104,6 +106,8 @@ thread_local! {
         tree: None,
         tree_hwnd: HWND::default(),
         tree_input: false,
+        tree_quick: Vec::new(),
+        tree_favs: None,
         font: HFONT::default(),
         icon_font: HFONT::default(),
         fh: 16,

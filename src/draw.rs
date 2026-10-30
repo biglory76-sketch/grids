@@ -130,6 +130,9 @@ pub(crate) unsafe fn draw_button(d: &DRAWITEMSTRUCT) {
     if id == ID_TB_FAV {
         return draw_star(dc, rc, fg, Star::Outline, dpi);
     }
+    if id == ID_TB_MARK {
+        return draw_mark(dc, rc, dpi);
+    }
     let dirty = id == ID_TB_SAVE && app(|a| a.dirty);
     text(dc, rc, glyph(id), icon_font, if dirty { GREEN } else { fg }, DT_CENTER);
     if dirty {

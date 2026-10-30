@@ -204,7 +204,7 @@ pub(crate) unsafe fn relayout() {
         let mut shown = vec![(a.tree_hwnd, g.tree)];
         let mut x = g.pad;
         let tb = |id: i32| unsafe { GetDlgItem(Some(a.main), id) }.unwrap_or_default();
-        for (id, w) in [(ID_TB_LAYOUT, s(70)), (ID_TB_SAVE, s(32)), (ID_TB_LOAD, s(32)), (ID_TB_VIEW, s(32)), (ID_TB_FAV, s(32))] {
+        for (id, w) in [(ID_TB_LAYOUT, s(70)), (ID_TB_SAVE, s(32)), (ID_TB_LOAD, s(32)), (ID_TB_VIEW, s(32)), (ID_TB_FAV, s(32)), (ID_TB_MARK, s(32))] {
             moves.push((tb(id), RECT { left: x, top: s(5), right: x + w, bottom: s(5) + s(24) }));
             x += w + s(4);
         }

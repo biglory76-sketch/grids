@@ -17,6 +17,7 @@ pub(crate) const ID_TB_LOAD: i32 = 204;
 pub(crate) const ID_TB_THEME: i32 = 205;
 pub(crate) const ID_TB_FAV: i32 = 206;
 pub(crate) const ID_TB_VIEW: i32 = 203;
+pub(crate) const ID_TB_MARK: i32 = 207; // green-arrow folder icon on the selected folders
 pub(crate) const ID_DRIVE: i32 = 1500; // + 0..25: drive buttons A: … Z:
 // menu ids
 pub(crate) const ID_HIDDEN: usize = 1100;

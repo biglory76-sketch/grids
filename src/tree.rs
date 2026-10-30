@@ -165,3 +165,31 @@ pub(crate) unsafe fn start_reveal(main: HWND) {
     app(|a| a.reveal_tries = 3);
     SetTimer(Some(main), TIMER_REVEAL, 120, None);
 }
+
+// Roots above the shell tree, as in Explorer's navigation pane: Desktop, Downloads and Documents, then the
+// favourites (the ★ list) in their order. Runs on the status timer; does nothing until the favourites change,
+// and then only swaps these roots, so the shell tree below keeps what is expanded.
+pub(crate) unsafe fn sync_tree_favs() {
+    let Some((t, favs)) = app(|a| a.tree.clone().filter(|_| a.tree_favs.as_ref() != Some(&a.s.favs)).map(|t| (t, a.s.favs.clone()))) else { return };
+    for old in app(|a| std::mem::take(&mut a.tree_quick)) {
+        _ = t.RemoveRoot(&old);
+    }
+    let mut paths: Vec<String> = [FOLDERID_Desktop, FOLDERID_Downloads, FOLDERID_Documents]
+        .iter()
+        .filter_map(|id| SHGetKnownFolderPath(id, KF_FLAG_DEFAULT, None).ok().map(|p| pwstr(p)))
+        .collect();
+    for f in &favs {
+        let f = f.trim_end_matches('\\');
+        if !paths.iter().any(|p| p.eq_ignore_ascii_case(f)) {
+            paths.push(f.to_string());
+        }
+    }
+    let mut quick = Vec::new();
+    for p in paths.iter().filter(|p| Path::new(p.as_str()).is_dir()) {
+        let Ok(item) = SHCreateItemFromParsingName::<_, _, IShellItem>(&HSTRING::from(p.as_str()), None) else { continue };
+        if t.InsertRoot(quick.len() as i32, &item, SHCONTF_FOLDERS.0 as u32, NSTCRS_VISIBLE.0 as u32, None).is_ok() {
+            quick.push(item);
+        }
+    }
+    app(|a| (a.tree_quick, a.tree_favs) = (quick, Some(favs)));
+}
