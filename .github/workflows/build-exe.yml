@@ -1,0 +1,54 @@
+# Builds grids.exe on every push (or by hand: Actions > Build grids.exe > Run workflow).
+# Same cross-build as nightly-check.yml, then the unit tests and a launch check on real Windows.
+# The exe is under the run's Artifacts as "grids-exe".
+name: Build grids.exe
+on:
+  push:
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      WINDRES: x86_64-w64-mingw32-windres
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq gcc-mingw-w64-x86-64 binutils-mingw-w64-x86-64
+      - run: rustup target add x86_64-pc-windows-gnu
+      - run: cargo build --release --target x86_64-pc-windows-gnu
+      - name: Build unit tests
+        shell: bash
+        run: |
+          exe=$(cargo test --no-run --target x86_64-pc-windows-gnu --message-format=json | jq -r 'select(.profile.test == true) | .executable // empty' | head -n1)
+          cp "$exe" grids-test.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: grids-exe
+          path: target/x86_64-pc-windows-gnu/release/grids.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: grids-test
+          path: grids-test.exe
+          retention-days: 3
+  check:
+    needs: build
+    runs-on: windows-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: grids-test
+      - uses: actions/download-artifact@v4
+        with:
+          name: grids-exe
+      - name: Unit tests
+        shell: pwsh
+        run: '& .\grids-test.exe; if ($LASTEXITCODE) { exit 1 }'
+      - name: Launch and check it stays up with a window
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath .\grids.exe -ArgumentList 'C:\Windows','C:\Users' -PassThru
+          Start-Sleep -Seconds 12
+          $p.Refresh()
+          if ($p.HasExited) { throw "grids.exe exited early (code $($p.ExitCode))" }
+          if ($p.MainWindowHandle -eq 0) { throw "grids.exe has no main window" }
+          "alive: pid $($p.Id), title '$($p.MainWindowTitle)'"
+          Stop-Process -Id $p.Id -Force
