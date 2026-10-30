@@ -240,14 +240,54 @@ unsafe fn put_desktop_ini(dir: &str, text: &str) -> std::io::Result<()> {
     set_attrs(&f, FILE_ATTRIBUTE_HIDDEN.0 | FILE_ATTRIBUTE_SYSTEM.0)
 }
 
+// Explorer's own way to set a folder icon: it writes IconResource, sets the folder attribute and, unlike a
+// plain file write, drops the shell's cached view of the folder's desktop.ini, so the new icon shows at once.
+unsafe fn shell_set_icon(dir: &str, icon: &str) -> bool {
+    let (path, index) = split_icon(icon);
+    let mut file: Vec<u16> = path.encode_utf16().chain([0]).collect();
+    let mut fcs = SHFOLDERCUSTOMSETTINGS {
+        dwSize: size_of::<SHFOLDERCUSTOMSETTINGS>() as u32,
+        dwMask: FCSM_ICONFILE,
+        pszIconFile: PWSTR(file.as_mut_ptr()),
+        cchIconFile: 0, // write all of it
+        iIconIndex: index,
+        ..Default::default()
+    };
+    SHGetSetFolderCustomSettings(&mut fcs, &HSTRING::from(dir), FCS_FORCEWRITE).is_ok()
+}
+
+// Tells Explorer, every pane and the tree that the folder's icon changed, and waits until they have heard
+// (FLUSH, not FLUSHNOWAIT, so the next press sees the new state). Panes showing the folder itself also look
+// up their address-bar icon again.
 unsafe fn notify(dir: &str) {
     let w = HSTRING::from(dir);
-    let flags = SHCNF_PATHW | SHCNF_FLUSHNOWAIT;
-    SHChangeNotify(SHCNE_UPDATEITEM, flags, Some(w.as_ptr() as _), None);
-    SHChangeNotify(SHCNE_ATTRIBUTES, flags, Some(w.as_ptr() as _), None);
+    let mut pidl: *mut ITEMIDLIST = std::ptr::null_mut();
+    let have = SHParseDisplayName(&w, None, &mut pidl, 0, None).is_ok() && !pidl.is_null();
+    if have {
+        SHChangeNotify(SHCNE_UPDATEITEM, SHCNF_IDLIST | SHCNF_FLUSH, Some(pidl as _), None);
+    }
+    SHChangeNotify(SHCNE_UPDATEITEM, SHCNF_PATHW | SHCNF_FLUSH, Some(w.as_ptr() as _), None);
+    SHChangeNotify(SHCNE_ATTRIBUTES, SHCNF_PATHW | SHCNF_FLUSH, Some(w.as_ptr() as _), None);
     if let Some(parent) = Path::new(dir.trim_end_matches('\\')).parent() {
         let p = HSTRING::from(parent.as_os_str());
-        SHChangeNotify(SHCNE_UPDATEDIR, flags, Some(p.as_ptr() as _), None);
+        SHChangeNotify(SHCNE_UPDATEDIR, SHCNF_PATHW | SHCNF_FLUSH, Some(p.as_ptr() as _), None);
+    }
+    if have {
+        let showing: Vec<(HWND, u32)> = app(|a| {
+            let n = a.s.panes();
+            (0..n)
+                .filter(|&i| a.s.paths[i].trim_end_matches('\\').eq_ignore_ascii_case(dir.trim_end_matches('\\')))
+                .filter_map(|i| {
+                    let p = a.panes[i].as_mut()?;
+                    p.ticket = next_ticket(&ICON_TICKET);
+                    Some((p.hwnd, p.ticket))
+                })
+                .collect()
+        });
+        for (h, ticket) in showing {
+            request_icon(h, ticket, pidl);
+        }
+        CoTaskMemFree(Some(pidl as _));
     }
 }
 
@@ -260,8 +300,10 @@ unsafe fn mark(dir: &str, icon: &str) -> std::io::Result<()> {
     let a = attrs(Path::new(dir)).ok_or_else(|| std::io::Error::other("folder unavailable"))?;
     let add_ro = a & (FILE_ATTRIBUTE_READONLY.0 | FILE_ATTRIBUTE_SYSTEM.0) == 0;
     put_desktop_ini(dir, &mark_ini(old.as_deref(), icon, add_ro))?;
-    if add_ro {
-        set_attrs(Path::new(dir), a | FILE_ATTRIBUTE_READONLY.0)?;
+    shell_set_icon(dir, icon); // on failure the desktop.ini above still holds the icon
+    // the shell call normally makes the folder read-only itself; make sure, or Explorer ignores desktop.ini
+    if let Some(now) = attrs(Path::new(dir)).filter(|x| x & (FILE_ATTRIBUTE_READONLY.0 | FILE_ATTRIBUTE_SYSTEM.0) == 0) {
+        set_attrs(Path::new(dir), now | FILE_ATTRIBUTE_READONLY.0)?;
     }
     notify(dir);
     Ok(())
@@ -270,7 +312,13 @@ unsafe fn mark(dir: &str, icon: &str) -> std::io::Result<()> {
 unsafe fn unmark(dir: &str) -> std::io::Result<()> {
     let Some(old) = read_desktop_ini(dir)? else { return Ok(()) };
     match unmark_ini(&old) {
-        (Some(text), _) => put_desktop_ini(dir, &text)?,
+        (Some(text), _) => {
+            put_desktop_ini(dir, &text)?;
+            // a custom icon the folder had before comes back through the shell too, for the same cache reason
+            if let Some(prev) = Ini::parse(&text).get(SHELL, "IconResource") {
+                shell_set_icon(dir, &prev);
+            }
+        }
         (None, drop_ro) => {
             let f = ini_file(dir);
             set_attrs(&f, FILE_ATTRIBUTE_NORMAL.0)?;
@@ -335,13 +383,19 @@ pub(crate) unsafe fn toggle_mark() {
         }
     }
     let n = dirs.len();
+    // one folder: say which, since with nothing selected it is the pane's own folder (not shown in its list)
+    let what = if n == 1 { format!("'{}'", short_name(&dirs[0])) } else { String::new() };
     let note = match (failed, KO.load(Ordering::Relaxed), off) {
         (Some(e), true, _) => format!("폴더 아이콘을 바꾸지 못했습니다 — {e}"),
         (Some(e), false, _) => format!("Could not change the folder icon — {e}"),
+        (None, true, false) if n == 1 => format!("{what} 폴더 아이콘을 바꿈"),
+        (None, true, true) if n == 1 => format!("{what} 폴더 아이콘을 원래대로 되돌림"),
         (None, true, false) => format!("폴더 {n}개 아이콘을 바꿈"),
         (None, true, true) => format!("폴더 {n}개 아이콘을 원래대로 되돌림"),
-        (None, false, false) => format!("Changed the icon of {n} folder(s)"),
-        (None, false, true) => format!("Restored the icon of {n} folder(s)"),
+        (None, false, false) if n == 1 => format!("Changed the icon of {what}"),
+        (None, false, true) if n == 1 => format!("Restored the icon of {what}"),
+        (None, false, false) => format!("Changed the icon of {n} folders"),
+        (None, false, true) => format!("Restored the icon of {n} folders"),
     };
     set_note(note);
 }
